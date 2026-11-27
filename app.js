@@ -262,12 +262,19 @@
   // وتُحذف بصمات كلمات المرور القديمة (الدخول هنا عبر الخادم فقط)
   function supaMergeUsers(oldUsers) {
     const me = oldUsers.find(x => x.authId === supa.user?.id);
-    db.appUsers = db.appUsers.filter(u => !me || u.username !== me.username).map(u => {
+    const twin = me && db.appUsers.find(u => u.username === me.username);
+    db.appUsers = db.appUsers.filter(u => u !== twin).map(u => {
       const ex = oldUsers.find(x => x.username === u.username && x.authId);
       const nu = { ...u, ...(ex ? { authId: ex.authId, authEmail: ex.authEmail } : {}) };
       delete nu.passHash; delete nu.salt; delete nu.iter; return nu;
     });
-    if (me) db.appUsers.unshift(me);
+    if (me) {
+      // نفس اسم المستخدم في النسخة: نحتفظ بمعرّفه القديم (حتى تبقى الاعتمادات والتوقيعات مرتبطة به) مع ربط دخوله الحالي ودور المدير
+      const merged = twin ? { ...twin, authId: me.authId, authEmail: me.authEmail, role: 'admin', active: true, perms: me.perms, special: me.special } : me;
+      delete merged.passHash; delete merged.salt; delete merged.iter;
+      db.appUsers.unshift(merged);
+      if (twin && session) { session.uid = merged.id; startSession(merged); }
+    }
   }
   async function bootSupa() {
     store.mode = 'cloud'; store.backend = 'supa'; store.canAdmin = false; WRITE_GAP = 40;
@@ -2909,7 +2916,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
         const oldUsers = db.appUsers;
         db = normalize(data);
         if (store.backend === 'supa') supaMergeUsers(oldUsers);
-        save({ settings: true }); renderBrand(); renderNav(); renderDatabase(); toast('جارٍ رفع النسخة الاحتياطية إلى قاعدة البيانات…', 4000);
+        save({ settings: true, approvals: true }); renderBrand(); renderNav(); renderDatabase(); toast('جارٍ رفع النسخة الاحتياطية إلى قاعدة البيانات…', 4000);
         if (store.backend === 'supa' && db.appUsers.some(u => !u.authId)) setTimeout(() => toast('المستخدمون القادمون من النسخة الاحتياطية يحتاجون كلمة مرور جديدة: من شاشة المستخدمين اضغط "تعيين كلمة مرور" لكل مستخدم', 9000), 4500);
       } catch { toast('الملف غير صالح'); }
     };
