@@ -1238,7 +1238,8 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       C('account', 'اسم الحساب', { input: 'select', optional: true, allowEmpty: '— حساب مخزون كل صنف —', options: () => leafAccounts().filter(a => isInvAcc(a.code)).map(accLabel), render: v => `<span class="hint">${v ? esc(v) : 'حسب الصنف'}</span>` }),
       C('supplier', 'المورد', { input: 'select', optional: true, allowEmpty: '— بدون مورد —', options: names('suppliers'), render: (v, r) => esc(v || r.source || '—') }),
       C('branch', 'الفرع', { input: 'select', optional: true, allowEmpty: '—', options: names('branches') }),
-      C('lines', 'الأصناف', { input: 'lines', formOnly: true, full: true, tax: true, pickOn: ['account'], pick: v => v.account ? i => !i.store || i.store === accCode(v.account) : null }),
+      C('lines', 'الأصناف', { input: 'lines', formOnly: true, full: true, tax: true, pickOn: ['account', 'warehouse'],
+        pick: v => (v.account || v.warehouse) ? i => (!v.account || !i.store || i.store === accCode(v.account)) && (!v.warehouse || !i.warehouse || i.warehouse === v.warehouse || stockAt(i.name, v.warehouse) > 0) : null }),
       C('itemsSum', 'الأصناف', { compute: linesSummary, render: (v, r) => `${esc(v)} <span class="hint">(${docTotals(r).n})</span>` }),
       C('sub', 'القيمة', computed(r => docTotals(r).sub, { total: true })), C('vat', 'ض.ق.م', computed(r => docTotals(r).vat, { total: true })),
       C('wht', 'ض. خصم وإضافة', computed(r => docTotals(r).wht, { total: true })), C('net', 'صافي الفاتورة', computed(r => docTotals(r).net, { total: true, render: v => `<b>${money(v)}</b>` })),
@@ -2268,7 +2269,8 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       const upd = () => { const v = Object.fromEntries(new FormData(form)); conds.forEach(c => { const el = $(`#modalBody [data-f="${c.key}"]`); if (el) el.hidden = !c.when(v); });
         const sig = JSON.stringify([...dyns.map(c => v[c.dynFrom || 'account'] ?? ''), v.otype ?? '']); if (sig === lastDyn) return; const first = lastDyn === null; lastDyn = sig;
         dyns.forEach(c => { const src = v[c.dynFrom || 'account'], list = c.suggest(v), dl = $(`#dl-${c.key}`), inp = form.elements.namedItem(c.key); if (dl) dl.innerHTML = list.map(o => `<option value="${esc(o)}">${esc(['party', 'supplier'].includes(c.key) ? partyLabel(o, src) : '')}</option>`).join('');
-          if (!inp) return; inp.placeholder = list.length ? `اختر من ${list.length} — أو اكتب` : 'اكتب اسم المستفيد';
+          if (!inp) return; const pk = partyKind(accCode(src));
+          inp.placeholder = list.length ? `اختر من ${list.length} — أو اكتب للبحث` : pk === 's' ? 'لا يوجد موردون على هذا الحساب — أضفهم من قاعدة بيانات الموردين' : pk === 'c' ? 'لا يوجد عملاء على هذا الحساب — أضفهم من قاعدة بيانات العملاء' : src ? 'اكتب اسم المستفيد' : 'اختر اسم الحساب أولاً';
           if (!first && inp.value && list.length && !list.includes(inp.value) && ['c', 's', 'o'].includes(partyKind(accCode(src)))) inp.value = '';
           if (list.length === 1 && !inp.value) inp.value = list[0]; }); };
       condUpd = upd; upd();
