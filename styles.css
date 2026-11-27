@@ -1472,11 +1472,38 @@ tbody tr:hover td { background: #f7f9fc; }
   .nav-group.lvl1 > .nav-head { padding: 6px 8px 6px 6px; font-size: 12.5px; }
   .nav-group.lvl1 .nav-ico { width: 26px; height: 26px; }
   .nav-sub { padding-inline-start: 8px; }
-  .nav-leaf a { display: flex; flex-direction: row; align-items: center; gap: 8px; padding: 6px 8px; font-size: 12.5px; text-align: start; white-space: nowrap; }
-  .nav-leaf a .nav-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .nav-leaf a, .nav > .nav-leaf a, .nav .nav-sub .nav-leaf a, .nav-group.lvl1 > .nav-sub .nav-leaf a, .nav-group.lvl2 > .nav-sub .nav-leaf a {
+    display: flex; flex-direction: row; justify-content: flex-start; align-items: center; gap: 8px; padding: 6px 8px; font-size: 12.5px; line-height: 1.3; text-align: start; white-space: nowrap; overflow-wrap: normal; }
+  .nav-leaf a .nav-title, .nav .nav-leaf .nav-title { flex: 1; width: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .nav-leaf .emo { flex-shrink: 0; }
+  .nav-leaf .badge { position: static; }
 }
 
 /* حقول الاختيار بالبحث (اسم المستفيد / العميل / المورد): سهم قائمة واضح */
 #modalBody input[data-dl]:not([readonly]) { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235b6b82' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: left 12px center; padding-left: 32px; }
 [dir="ltr"] #modalBody input[data-dl]:not([readonly]) { background-position: right 12px center; padding-left: 12px; padding-right: 32px; }
+
+/* ===== الطباعة: جدول احترافي لكل التقارير والقوائم — رأس وإجمالي باللون الأزرق والخط أبيض ===== */
+#printArea, #printArea * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+#printArea .doc-head { border-bottom-color: #1c51ae; }
+#printArea .doc-head h1 { color: #1c51ae; }
+#printArea table { width: 100%; border-collapse: collapse; margin: 0 0 14px; font-size: 12px; page-break-inside: auto; }
+#printArea thead { display: table-header-group; }
+#printArea tfoot { display: table-row-group; }
+#printArea tr { page-break-inside: avoid; break-inside: avoid; }
+#printArea th { background: #1c51ae !important; color: #fff !important; font-weight: 700; border: 1px solid #16469a; padding: 7px 9px; text-align: start; }
+#printArea td { border: 1px solid #cdd8ea; padding: 6px 9px; color: #111; background: #fff; }
+#printArea tbody tr:nth-child(even) td { background: #f2f6fd; }
+#printArea td.num, #printArea th.num { text-align: end; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#printArea tfoot td, #printArea tr.total td, #printArea tr.closing td, #printArea tr.grand td {
+  background: #1c51ae !important; color: #fff !important; font-weight: 800; border-color: #16469a; }
+#printArea tr.section td, #printArea tr.opening td { background: #e3ecfb !important; color: #10234a; font-weight: 700; }
+#printArea .card { border: 0; box-shadow: none; margin: 0 0 12px; break-inside: auto; }
+#printArea .card-head { padding: 6px 0; border: 0; background: none; }
+#printArea .card-head h3 { font-size: 15px; color: #1c51ae; margin: 0; }
+#printArea .card-body { padding: 0; }
+#printArea .grid-2 { display: block; }
+#printArea .table-wrap { overflow: visible; max-height: none; }
+#printArea .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 10px; }
+#printArea .kpi { border: 1px solid #cdd8ea; box-shadow: none; padding: 8px; }
+@page { margin: 12mm 10mm; }

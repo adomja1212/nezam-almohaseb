@@ -226,6 +226,7 @@
     if (supaReady) return supaReady;
     store.me = { id: supa.user.id, name: '', avatarUrl: '', isOwner: false, canEdit: false };
     store.cloud = supaAdapter(supa.sb);
+    try { sessionStorage.setItem('acc-supa-tab', '1'); } catch {}
     supaReady = new Promise(res => { store.onReady = res; });
     loadPrefs(store.cloud).then(() => attachCloud());
     return supaReady;
@@ -286,7 +287,9 @@
     let remembered = false; try { remembered = !!localStorage.getItem(SUPA_REM); } catch {}
     setSync('saved');
     // جلسة مفتوحة في نفس النافذة (تحديث الصفحة): متابعة بدون طلب الدخول. غير ذلك: شاشة الدخول دائماً
-    if (s?.user && !remembered) { supa.user = s.user; supaConnect(); return; }
+    let inTab = false; try { inTab = sessionStorage.getItem('acc-supa-tab') === '1'; } catch {}
+    // تحديث الصفحة في نفس النافذة لا يخرج من البرنامج (حتى مع حفظ بيانات الدخول)
+    if (s?.user && (!remembered || inTab)) { supa.user = s.user; supaConnect(); return; }
     let msg = ''; try { msg = sessionStorage.getItem('acc-logout-msg') || ''; sessionStorage.removeItem('acc-logout-msg'); } catch {}
     showAuth(store.hasUsers ? 'login' : 'setup', msg);
   }
@@ -297,7 +300,7 @@
     supa.user = data.user; return { ok: true };
   }
   async function supaLogout(msg) {
-    let remembered = false; try { remembered = !!localStorage.getItem(SUPA_REM); sessionStorage.setItem('acc-logout-msg', msg || ''); } catch {}
+    let remembered = false; try { remembered = !!localStorage.getItem(SUPA_REM); sessionStorage.setItem('acc-logout-msg', msg || ''); sessionStorage.removeItem('acc-supa-tab'); } catch {}
     if (!remembered) await supa.sb?.auth.signOut().catch(() => {});
     location.reload();
   }
@@ -2679,7 +2682,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
           <div class="spacer"></div>
           <div class="ledger-pick">
             <select class="input" id="ledgerPick">${sorted.map(x => `<option value="${esc(x.code)}" ${x.code === code ? 'selected' : ''}>${'  '.repeat(depth(x))}${esc(accLabel(x))}</option>`).join('')}</select>
-            <button class="btn ghost" onclick="window.print()">${icons.print}طباعة</button>
+            <button class="btn ghost" data-print-page>${icons.print}طباعة</button>
           </div>
         </div>
         <div class="card-body">${statementHTML(opening, rows, {
@@ -2874,7 +2877,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
 
     const show = k => !only || only === k;
     content.innerHTML = `
-      <div class="toolbar" style="margin-bottom:16px;justify-content:flex-end"><button class="btn ghost" onclick="window.print()">${icons.print}طباعة</button></div>
+      <div class="toolbar" style="margin-bottom:16px;justify-content:flex-end"><button class="btn ghost" data-print-page>${icons.print}طباعة</button></div>
       <div class="grid-2" style="grid-template-columns:${only ? 'minmax(0, 760px)' : '1fr 1fr'}">
         ${show('income') ? `<div class="card">
           <div class="card-head"><div><h3>قائمة الدخل</h3><div class="sub">عن الفترة حتى ${dt}</div></div></div>
@@ -3566,7 +3569,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
     if (!can(p, 'a') || !canSp('import')) rm('#importBtn');
     if (!can(p, 'e')) rm('[data-edit], [data-editacc]');
     if (!can(p, 'd')) rm('[data-del], [data-delacc], #clearScreenBtn, #jClear, .sel-col, #bulkBar');
-    if (!canSp('export')) rm('#exportBtn, #bxExport, [onclick="window.print()"]');
+    if (!canSp('export')) rm('#exportBtn, #bxExport, [data-print-page]');
     if (!canSp('import') || !['receipts', 'payments', 'boxTransfers'].some(x => can(x, 'a'))) rm('#bxImport');
     if (!can('openingBalances', 'a')) rm('[data-new-open]');
     $$('[data-wnew]', content).forEach(b => { if (!can(b.dataset.wnew, 'a')) b.remove(); });
@@ -4660,6 +4663,28 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       window.addEventListener('afterprint', done); setTimeout(() => { window.print(); setTimeout(done, 500); }, 50);
     };
   }
+
+  // =====================================================================
+  // طباعة أي صفحة (القوائم المالية وكشوف الحسابات وغيرها) بنفس قالب التقارير: بدون صفحة فارغة، وجدول احترافي
+  // =====================================================================
+  function printPage() {
+    const s = db.settings, area = $('#printArea');
+    const box = content.cloneNode(true);
+    // إزالة عناصر التحكم من النسخة المطبوعة
+    // الروابط داخل الجداول (مثل اسم الحساب) تُطبع كنص، وباقي الأزرار تُحذف
+    box.querySelectorAll('td button, td a, th button').forEach(el => { if (el.closest('.row-actions')) return; const t = document.createElement('span'); t.textContent = el.textContent; el.replaceWith(t); });
+    box.querySelectorAll('.toolbar, .row-actions, button, .btn, .ledger-pick, .rep-filters, .rb-mode, .rb-meas, .tabbar, input[type=search], .chart, svg.spark').forEach(el => el.remove());
+    box.querySelectorAll('select').forEach(sel => { const t = document.createElement('b'); t.textContent = sel.options[sel.selectedIndex]?.textContent || ''; sel.replaceWith(t); });
+    box.querySelectorAll('table').forEach(t => t.classList.add('print-table'));
+    area.innerHTML = `<div class="doc"><div class="doc-head"><div><h1>${esc(appName())}</h1><p>${esc(s.address || '')}</p></div>
+      <div class="doc-title"><h2>${esc($('#pageTitle').textContent)}</h2><span>${esc(new Date().toLocaleDateString(window.UI_LOCALE || 'ar-EG'))}</span></div></div>
+      ${box.innerHTML}
+      <div class="doc-foot">طُبع بواسطة ${esc(curUser()?.name || '')} — ${new Date().toLocaleString(window.UI_LOCALE || 'ar-EG')}</div></div>`;
+    document.body.classList.add('printing');
+    const done = () => { document.body.classList.remove('printing'); area.innerHTML = ''; window.removeEventListener('afterprint', done); };
+    window.addEventListener('afterprint', done); setTimeout(() => { window.print(); setTimeout(done, 500); }, 50);
+  }
+  document.addEventListener('click', e => { if (e.target.closest('[data-print-page]')) { e.preventDefault(); printPage(); } });
 
   // =====================================================================
   // صفحة لكل مخزن: الأرصدة والحركات، والأذون تُفتح والمخزن مقفل عليها
