@@ -37,9 +37,9 @@
     'expenseOrders', 'supplierPayReqs', 'purchaseQuotes', 'fixedAssets'];
   const TX_TABLES = ['journal', 'openingBalances', 'receipts', 'payments', 'boxTransfers', 'supplierAccruals', 'salesInvoices', 'salesQuotes', 'salesReturns', 'purchaseOrders', 'purchaseInvoices', 'purchaseReturns',
     'stockIn', 'stockOut', 'transfers', 'attendance', 'payroll', 'leaves', 'dailyLabor', 'advances', 'machineOps', 'maintenanceOrders'];
-  const APP_NAME = 'Sawah System';
+  const APP_NAME = 'Sawah ERP';
   // اسم البرنامج المعروض: اسم الشركة من الإعدادات إن وُجد، وإلا الاسم الافتراضي (والاسم القديم يُعامل كافتراضي)
-  const appName = () => { const c = (db.settings.company || '').trim(); return c && c !== 'نظام المحاسب' ? c : APP_NAME; };
+  const appName = () => { const c = (db.settings.company || '').trim(); return c && !['نظام المحاسب', 'Sawah System'].includes(c) ? c : APP_NAME; };
   const DEFAULT_SETTINGS = { company: APP_NAME, taxNo: '', commercialReg: '', currency: 'ج.م', vat: 14, fiscalStart: `${new Date().getFullYear()}-01-01`, address: '' };
   const emptyDb = () => ({ ...Object.fromEntries(TABLES.map(t => [t, []])), settings: { ...DEFAULT_SETTINGS }, approvalCfg: {} });
   const normalize = data => {

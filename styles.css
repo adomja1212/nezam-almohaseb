@@ -1442,3 +1442,6 @@ tbody tr:hover td { background: #f7f9fc; }
   .auth-panel::before, .auth-panel::after { display: none; }
   .auth-card { margin-top: -16px; padding: 26px 20px 22px; }
 }
+
+/* شعار Sawah ERP في رأس القائمة */
+.brand-logo { background: #0b3d9c url("app-icon.png") center / cover no-repeat !important; color: transparent !important; font-size: 0 !important; }
