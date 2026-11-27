@@ -1252,9 +1252,11 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       C('onLeave', 'الحالة اليوم', { compute: r => db.leaves.some(l => l.employee === r.name && l.status === 'معتمدة' && l.from <= today() && l.to >= today()) ? 'إجازة' : r.status, render: pill }),
       C('status', 'حالة التعاقد', { ...status('نشط', 'موقوف'), formOnly: true })] },
     attendance: { title: 'الحضور والانصراف', sub: 'سجل الحضور اليومي للموظفين', single: 'سجل حضور', filter: 'status', cols: [
+      C('no', 'رقم الحركة', CODE),
       C('date', 'التاريخ', D), C('employee', 'الموظف / العامل', { input: 'select', options: staffNames, full: true }),
       C('timeIn', 'الحضور', { input: 'time', optional: true }), C('timeOut', 'الانصراف', { input: 'time', optional: true }), C('status', 'الحالة', status('حاضر', 'متأخر', 'غائب', 'إجازة'))] },
     payroll: { title: 'الرواتب', sub: 'الاستحقاق: من حـ/ المرتبات إلى حـ/ المرتبات المستحقة · الصرف: من حـ/ المستحقة إلى حـ/ الخزينة', single: 'راتب', filter: 'paid', cols: [
+      C('no', 'رقم الحركة', CODE),
       C('month', 'الشهر', { input: 'month' }),
       C('group', 'الحساب الرئيسي (فئة المرتبات)', { render: plain, input: 'select', options: () => payGroupOpts().filter(([g]) => payGroups().includes(g)) }),
       C('employee', 'الموظف / العامل', { input: 'select', dep: ['group'], options: v => allStaff().filter(x => !v?.group || x.group === v.group).map(x => [x.name, `${x.name} — ${pageInfo(x._t).title}`]) }),
@@ -1270,6 +1272,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
         x.paid = 'مصروف'; submitForApproval('payroll', x, true); save(); renderPage(); renderNav(); toast(`تم صرف راتب ${x.employee} من ${x.box}`); } }],
       validate: (d, rec) => db.payroll.some(p => p !== rec && p.month === d.month && p.employee === d.employee) ? `راتب ${d.employee} عن ${d.month} مسجل من قبل` : '' },
     leaves: { title: 'الإجازات', sub: 'الإجازة المعتمدة تظهر في حالة الموظف تلقائياً', single: 'إجازة', filter: 'status', cols: [
+      C('no', 'رقم الحركة', CODE),
       C('employee', 'الموظف / العامل', { input: 'select', options: staffNames, full: true }), C('type', 'نوع الإجازة', { render: plain, input: 'select', options: opt('اعتيادية', 'عارضة', 'مرضية', 'بدون أجر') }),
       C('from', 'من', D), C('to', 'إلى', D), C('days', 'الأيام', { cls: 'num', compute: r => Math.max(0, Math.round((new Date(r.to) - new Date(r.from)) / 864e5) + 1) }),
       C('status', 'الحالة', status('قيد المراجعة', 'معتمدة', 'مرفوض'))],
@@ -1283,11 +1286,13 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       C('advance', 'السلف', computed(r => sum(db.advances.filter(a => a.worker === r.name && a.type === 'سلفة'), a => a.amount), { total: true })),
       C('status', 'الحالة', status('نشط', 'موقوف'))] },
     dailyLabor: { title: 'يوميات العمال', sub: 'تُرحّل: من حـ/ أجور العمالة (حسب نوع تكلفة العامل) إلى حـ/ الخزينة', single: 'يومية', cols: [
+      C('no', 'رقم الحركة', CODE),
       C('date', 'أسبوع', D), C('worker', 'العامل', { input: 'select', options: () => db.workers.filter(w => w.status === 'نشط').map(w => w.name) }), C('site', 'الموقع'),
       C('days', 'أيام العمل', N), C('wage', 'اليومية', M), C('total', 'المستحق', computed(r => r.days * r.wage, { total: true })), boxField('يُصرف من')],
       defaults: () => ({ days: 6, box: db.cashboxes.find(b => b.type === 'خزينة')?.name }),
       onSelect: { worker: (f, v) => { const w = db.workers.find(x => x.name === v); if (w) { f.wage.value = w.wage; f.site.value = w.site; } } } },
     advances: { title: 'السلف والجزاءات', sub: 'السلفة: من حـ/ نوع السلفة (أرصدة مدينة أخرى) · المكافأة: من حـ/ الأجور · الجزاء لا يُرحّل', single: 'حركة', filter: 'type', cols: [
+      C('no', 'رقم الحركة', CODE),
       C('date', 'التاريخ', D), C('worker', 'العامل', { input: 'select', options: names('workers') }), C('type', 'النوع', status('سلفة', 'جزاء', 'مكافأة')),
       C('advType', 'نوع السلفة', { render: v => v ? plain(v) : '—', input: 'select', optional: true, allowEmpty: '— للسلفة فقط —', options: advCats }),
       C('amount', 'المبلغ', M), boxField(), C('notes', 'ملاحظات', { full: true, optional: true })],
@@ -1343,6 +1348,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       C('state', 'الحالة', statusOf(machineState, 'تعمل', 'في الصيانة', 'متوقفة')),
       C('status', 'الحالة التشغيلية', { ...status('تعمل', 'متوقفة'), formOnly: true })] },
     machineOps: { title: 'تشغيل المعدات', sub: 'التكلفة = الساعات × تكلفة ساعة المعدة', single: 'تشغيل', cols: [
+      C('no', 'رقم الحركة', CODE),
       C('date', 'التاريخ', D), C('machine', 'المعدة', { input: 'select', options: () => db.machines.filter(m => machineState(m) === 'تعمل').map(m => m.name) }),
       C('operator', 'السائق / المشغل', { input: 'select', options: names('workers') }),
       C('site', 'الموقع'), C('hours', 'ساعات التشغيل', { ...N, total: true }), C('fuel', 'الوقود (لتر)', { ...N, total: true }),
@@ -1357,6 +1363,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       defaults: () => ({ cost: 0, status: 'مفتوح' }),
       afterSave: r => { if (r.status === 'مكتمل') db.maintenancePlan.filter(p => p.machine === r.machine && p.nextDate <= r.date).forEach(p => { p.lastDate = r.date; }); } },
     maintenancePlan: { title: 'الصيانة الدورية', sub: 'الحالة تُحسب من تاريخ الصيانة القادمة', single: 'بند صيانة', filter: 'status', cols: [
+      C('no', 'رقم الحركة', CODE),
       C('machine', 'المعدة', { input: 'select', options: names('machines') }), C('task', 'العمل المطلوب', { full: true }), C('interval', 'الدورية'),
       C('lastDate', 'آخر صيانة', D), C('nextDate', 'الصيانة القادمة', D), C('status', 'الحالة', statusOf(planStatus, 'منتظمة', 'قريبة', 'متأخرة'))],
       actions: [{ icon: 'wrench', title: 'إنشاء أمر صيانة', write: true, target: 'maintenanceOrders', fn: r => openRecordForm('maintenanceOrders', null, { machine: r.machine, type: 'وقائية' }) }] },
@@ -2141,6 +2148,16 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
   }
 
   // رقم المستند التالي (INV-3105 → INV-3106)
+  // ترقيم تلقائي لكل الشاشات: يكمل على آخر كود مسجل، وإذا كانت الشاشة فارغة يبدأ بالبادئة المحددة لها
+  const AUTO_PREFIX = {
+    customers: 'CUS-', suppliers: 'SUP-', items: 'ITM-', warehouses: 'WH-', units: 'U-', salesItems: 'SI-', branches: 'BR-', costCenters: 'CC-',
+    crops: 'CR-', departments: 'DEP-', cashboxes: 'BOX-', employees: 'EMP-', workers: 'WRK-', girlsFixed: 'GF-', girlsTemp: 'GT-', bangladesh: 'BD-',
+    fixedAssets: 'FA-', machines: 'MCH-', journal: 'JV-', receipts: 'RV-', payments: 'PV-', boxTransfers: 'BT-', openingBalances: 'OB-',
+    supplierAccruals: 'SA-', salesInvoices: 'SL-', salesQuotes: 'SQ-', salesReturns: 'SR-', purchaseQuotes: 'PQ-', purchaseOrders: 'PO-',
+    purchaseInvoices: 'PI-', purchaseReturns: 'PR-', stockIn: 'GRN-', stockOut: 'GIN-', transfers: 'TR-', maintenanceOrders: 'MO-',
+    expenseOrders: 'EXP-', supplierPayReqs: 'SPR-', payroll: 'PAY-', dailyLabor: 'DL-', advances: 'ADV-', machineOps: 'OP-', leaves: 'LV-',
+    attendance: 'ATT-', maintenancePlan: 'MP-' };
+  const autoNo = (T, key) => nextNo(db[T] || [], key) || ((AUTO_PREFIX[T] || modules[T]?.prefix || (key === 'code' ? 'C-' : 'N-')) + '0001');
   const nextNo = (list, key) => {
     const nums = list.map(r => String(r[key] ?? '').match(/^(.*?)(\d+)$/)).filter(Boolean);
     if (!nums.length) return '';
@@ -2155,7 +2172,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
     const fields = m.cols.filter(c => !c.compute);
     const t = today();
     const defaults = Object.fromEntries(fields.map(c => [c.key, c.input === 'date' ? t : c.input === 'month' ? t.slice(0, 7) : '']));
-    ['no', 'code'].forEach(k => { if (k in defaults) defaults[k] = nextNo(db[T], k) || (k === 'no' && m.prefix ? m.prefix + '0001' : ''); });
+    ['no', 'code'].forEach(k => { if (k in defaults) defaults[k] = autoNo(T, k); });
     const recId = record?.id;
     openModal(`${record ? 'تعديل' : 'إضافة'} ${m.single}`, fields, record ? { ...record, ...(m.load?.(record) || {}) } : { ...defaults, ...(m.defaults?.() || {}), ...prefill }, data => {
       // السجل الحالي من قاعدة البيانات (قد يكون مستخدم آخر عدّله أو حذفه)
@@ -2163,6 +2180,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       if (recId && !cur) { toast('هذا السجل حذفه مستخدم آخر'); return; }
       locks.forEach(k => { data[k] = prefill[k]; });
       fields.forEach(c => { if (c.input === 'number') data[c.key] = +data[c.key] || 0; if (c.input === 'lines' || c.input === 'jlines') { try { data[c.key] = JSON.parse(data[c.key] || '[]'); } catch { data[c.key] = []; } } });
+      if (!cur) ['no', 'code'].forEach(k => { if (fields.some(c => c.key === k) && (!data[k] || db[T].some(r => r[k] === data[k]))) data[k] = autoNo(T, k); });
       if (m.key && db[T].some(r => r !== cur && r[m.key] === data[m.key])) { toast(`"${data[m.key]}" مسجل من قبل`); return false; }
       if (m.fixed && !cur) Object.assign(data, m.fixed);
       const err = m.validate?.(data, cur);
@@ -2213,6 +2231,8 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
           if (list.length === 1 && !inp.value) inp.value = list[0]; }); };
       condUpd = upd; upd();
     }
+    // الكود / رقم الحركة يتولد تلقائياً ولا يُكتب يدوياً
+    if (!record) ['no', 'code'].forEach(k => { const el = form.elements.namedItem(k); if (el && el.tagName === 'INPUT') { el.readOnly = true; el.classList.add('auto-code'); el.title = 'ترقيم تلقائي'; } });
     // قوائم تابعة: عند تغيير الحساب/المخزن تُعاد بناء القائمة التابعة له ولا تعرض إلا ما يخصه
     const deps = fields.filter(c => c.dep && c.input === 'select');
     if (deps.length) {
@@ -3650,7 +3670,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       'اسم المستفيد / الطرف': ['المستلم منه', 'المستفيد', 'الطرف', 'العميل'], 'اسم المستفيد': ['المصروف إليه', 'المستفيد', 'الطرف', 'المورد'], 'رقم فاتورة المردودات': ['رقم المرتجع'], 'المبلغ المستحق': ['المبلغ'] };
     const names = c => [c.label, c.key, ...(AKA[c.label] || []), ...(c.aka || [])].map(norm);
     const colIdx = Object.fromEntries(fields.map(c => [c.key, header.findIndex(h => names(c).includes(h))]));
-    const missingCols = fields.filter(c => !c.optional && colIdx[c.key] < 0 && !(def.defaults && c.key in (def.defaults() || {})));
+    const missingCols = fields.filter(c => !c.optional && !['no', 'code'].includes(c.key) && colIdx[c.key] < 0 && !(def.defaults && c.key in (def.defaults() || {})));
     const keyIdx = def.key ? colIdx[def.key] : -1;
     const seen = new Set();
     const rows = sheet.slice(1).map((r, i) => {
@@ -3669,7 +3689,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
           Object.keys(out.data).forEach(k => { if (out.data[k] === '' && !fields.find(c => c.key === k).optional) delete out.data[k]; });
         } else {
           if (missingCols.length) throw new Error(`أعمدة ناقصة: ${missingCols.map(c => c.label).join('، ')}`);
-          const empty = fields.filter(c => !c.optional && colIdx[c.key] >= 0 && (out.data[c.key] === '' || out.data[c.key] == null) && !(def.defaults && c.key in (def.defaults() || {})));
+          const empty = fields.filter(c => !c.optional && !['no', 'code'].includes(c.key) && colIdx[c.key] >= 0 && (out.data[c.key] === '' || out.data[c.key] == null) && !(def.defaults && c.key in (def.defaults() || {})));
           if (empty.length) throw new Error(`حقول فارغة: ${empty.map(c => c.label).join('، ')}`);
         }
       } catch (e) { out.status = 'error'; out.msg = e.message; }
@@ -3690,7 +3710,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       for (const g of groups.values()) {
         const head = Object.fromEntries(Object.entries(g[0].data).filter(([k, v]) => !LK.includes(k) && !(k in preset && v === '')));
         const data = JSON.parse(JSON.stringify({ ...(def.defaults?.() || {}), ...head, [key]: g.map(r => Object.fromEntries(LK.map(k => [k, r.data[k] ?? '']))).map(l => def.lineFix ? def.lineFix(l) : l).filter(l => l[LK[0]]) }));
-        if (!data.no) data.no = nextNo(db[t], 'no');
+        if (!data.no) data.no = autoNo(t, 'no');
         let err = '';
         try { def.prepare?.(data, made); err = def.validate?.(data, null) || ''; } catch (e) { err = e.message; }
         if (err) g.forEach(r => { r.status = 'error'; r.msg = `${data.no ? `مستند ${data.no}: ` : ''}${err}`; });
@@ -3714,7 +3734,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
           const LK = def.lineKeys || LINE_KEYS, key = def.lineKey || 'lines';
           const head = Object.fromEntries(Object.entries(g[0].data).filter(([k, v]) => !LK.includes(k) && !(k in preset && v === '')));
           const data = { ...(def.defaults?.() || {}), ...head, [key]: g.map(r => Object.fromEntries(LK.map(k => [k, r.data[k] ?? '']))).map(l => def.lineFix ? def.lineFix(l) : l).filter(l => l[LK[0]]) };
-          if (!data.no) data.no = nextNo(db[t], 'no');
+          if (!data.no) data.no = autoNo(t, 'no');
           def.prepare?.(data, made);
           const err = def.validate?.(data, null);
           if (err) { g.forEach(r => fails.push({ ...r, status: 'error', msg: err })); continue; }
@@ -3730,6 +3750,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
         if (t === 'accounts') { data.parent = data.parent || null; data.balance = +data.balance || 0; }
         // التحقق على نفس النسخة التي ستُحفظ (التحقق قد يكمّل حقولاً مثل نوع الفترة أو اسم المستفيد)
         const merged = { ...(cur || def.defaults?.() || {}), ...data };
+        if (!cur) ['no', 'code'].forEach(k => { if ((modules[t]?.cols || []).some(c => c.key === k) && !merged[k]) merged[k] = autoNo(t, k); });
         const err = def.validate?.(merged, cur);
         if (err) { fails.push({ ...r, status: 'error', msg: err }); continue; }
         let rec = cur;
