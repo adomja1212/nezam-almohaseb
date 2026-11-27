@@ -2882,6 +2882,14 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
     const cloud = store.mode === 'cloud';
     const rows = TABLES.map(t => ({ t, n: db[t].length, last: last(t) })).sort((a, b) => b.n - a.n);
     content.innerHTML = `
+      <div class="card" style="margin-bottom:18px">
+        <div class="card-head"><div><h3>النسخ الاحتياطي والاستعادة</h3><div class="sub">ملف JSON يحتوي على كل الجداول والإعدادات</div></div></div>
+        <div class="card-body" style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn ghost ${canSp('backup') ? '' : 'hide'}" id="backupBtn">${icons.export}تنزيل نسخة احتياطية</button>
+          <label class="btn primary admin-only ${canSp('backup') ? '' : 'hide'}" style="cursor:pointer">${icons.upload || icons.export}استعادة نسخة احتياطية<input type="file" id="restoreInput" accept=".json,application/json" hidden></label>
+          ${store.mode === 'local' ? '<button class="btn ghost" id="demoBtn">تحميل البيانات التجريبية</button>' : ''}
+        </div>
+      </div>
       <div class="kpis">
         ${kpi('نوع قاعدة البيانات', cloud ? 'سحابية مشتركة' : 'محلية', cloud ? 'مزامنة لحظية بين كل المستخدمين والأجهزة' : 'محفوظة في هذا المتصفح فقط', cloud ? 'up' : 'down', cloud ? 'green' : 'amber', icons.db)}
         ${kpi('عدد السجلات', num(total), `في ${TABLES.length} جدول`, '', '', icons.list)}
@@ -2899,14 +2907,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
             <td><a class="link-btn" href="#${r.t}">فتح</a></td></tr>`).join('')}</tbody>
         </table></div>
       </div>
-      <div class="card">
-        <div class="card-head"><div><h3>النسخ الاحتياطي والاستعادة</h3><div class="sub">ملف JSON يحتوي على كل الجداول والإعدادات</div></div></div>
-        <div class="card-body" style="display:flex;gap:10px;flex-wrap:wrap">
-          <button class="btn ghost ${canSp('backup') ? '' : 'hide'}" id="backupBtn">${icons.export}تنزيل نسخة احتياطية</button>
-          <label class="btn ghost admin-only ${canSp('backup') ? '' : 'hide'}" style="cursor:pointer">استعادة نسخة احتياطية<input type="file" id="restoreInput" accept=".json,application/json" hidden></label>
-          ${store.mode === 'local' ? '<button class="btn ghost" id="demoBtn">تحميل البيانات التجريبية</button>' : ''}
-        </div>
-      </div>`;
+`;
     $('#backupBtn').onclick = () => download(`acc-backup-${today()}.json`, JSON.stringify(db, null, 2), 'application/json');
     $('#restoreInput').onchange = async e => {
       try {
