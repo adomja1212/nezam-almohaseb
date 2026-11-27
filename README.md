@@ -1,4 +1,4 @@
-# نظام المحاسب
+# Sawah System
 
 **افتح البرنامج:** https://adomja1212.github.io/nezam-almohaseb/
 

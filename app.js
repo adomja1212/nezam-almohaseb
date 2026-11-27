@@ -36,7 +36,10 @@
     'units', 'costCenters', 'crops', 'girlsFixed', 'girlsTemp', 'bangladesh', 'branches', 'salesItems', 'supplierAccruals', 'openingBalances'];
   const TX_TABLES = ['journal', 'openingBalances', 'receipts', 'payments', 'boxTransfers', 'supplierAccruals', 'salesInvoices', 'salesQuotes', 'salesReturns', 'purchaseOrders', 'purchaseInvoices', 'purchaseReturns',
     'stockIn', 'stockOut', 'transfers', 'attendance', 'payroll', 'leaves', 'dailyLabor', 'advances', 'machineOps', 'maintenanceOrders'];
-  const DEFAULT_SETTINGS = { company: 'نظام المحاسب', taxNo: '', commercialReg: '', currency: 'ج.م', vat: 14, fiscalStart: `${new Date().getFullYear()}-01-01`, address: '' };
+  const APP_NAME = 'Sawah System';
+  // اسم البرنامج المعروض: اسم الشركة من الإعدادات إن وُجد، وإلا الاسم الافتراضي (والاسم القديم يُعامل كافتراضي)
+  const appName = () => { const c = (db.settings.company || '').trim(); return c && c !== 'نظام المحاسب' ? c : APP_NAME; };
+  const DEFAULT_SETTINGS = { company: APP_NAME, taxNo: '', commercialReg: '', currency: 'ج.م', vat: 14, fiscalStart: `${new Date().getFullYear()}-01-01`, address: '' };
   const emptyDb = () => ({ ...Object.fromEntries(TABLES.map(t => [t, []])), settings: { ...DEFAULT_SETTINGS }, approvalCfg: {} });
   const normalize = data => {
     const d = emptyDb();
@@ -3000,7 +3003,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
     state.authMode = mode;
     document.body.classList.add('locked');
     const box = $('#auth'); box.hidden = false;
-    const company = db.settings.company || 'نظام المحاسب';
+    const company = appName();
     const letter = [...company.trim()][0] || 'م';
     const canSetup = store.mode !== 'cloud' || store.canAdmin || store.backend === 'supa';
     const rem = getRemember();
@@ -4782,7 +4785,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
     const info = pageInfo(page);
     $('#pageTitle').textContent = info.title;
     $('#pageSub').textContent = path?.titles.length ? `${path.titles.join(' › ')} › ${info.sub}` : info.sub;
-    document.title = `${info.title} | ${db.settings.company || 'نظام المحاسب'}`;
+    document.title = `${info.title} | ${appName()}`;
     closeModal();
     renderBrand();
     renderNav();
@@ -4816,7 +4819,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
 
   // ---------- رأس القائمة وتذييلها ----------
   function renderBrand() {
-    const name = db.settings.company || 'نظام المحاسب';
+    const name = appName();
     $('#brandName').textContent = name;
     $('#brandLetter').textContent = [...name.trim()][0] || 'م';
   }
