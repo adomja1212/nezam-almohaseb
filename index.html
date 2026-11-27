@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>نظام المحاسب</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="locked">
+  <div class="auth" id="auth"><div class="auth-boot"><div class="spinner"></div><p>جارٍ الاتصال بقاعدة البيانات…</p></div></div>
+  <div class="overlay" id="overlay"></div>
+  <div class="edge-hot" id="edgeHot" aria-hidden="true"></div>
+
+  <!-- القائمة الجانبية -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-logo" id="brandLetter">م</div>
+      <div class="brand-text">
+        <div class="brand-name" id="brandName">نظام المحاسب</div>
+        <div class="brand-sub">نظام محاسبة متكامل</div>
+      </div>
+      <button class="pin-btn" id="pinBtn" type="button" title="تثبيت القائمة" aria-label="تثبيت القائمة">
+        <svg viewBox="0 0 24 24"><path d="M15 3 21 9l-3 1-4 4 1 5-2 2-4-4-5 5v-1l4-5-4-4 2-2 5 1 4-4z"/></svg>
+      </button>
+    </div>
+
+    <div class="side-quick" role="toolbar" aria-label="اختصارات">
+      <button type="button" class="sq sq-gauge" data-sq="reportCenter" title="التقارير" aria-label="التقارير">
+        <svg viewBox="0 0 24 24"><path d="M12 4C6.5 4 2 8.4 2 13.9c0 2 .6 3.9 1.7 5.5.2.4.6.6 1 .6h14.6c.4 0 .8-.2 1-.6A9.8 9.8 0 0 0 22 13.9C22 8.4 17.5 4 12 4Zm-6.7 10.6H4.1a.7.7 0 0 1 0-1.4h1.2a.7.7 0 0 1 0 1.4Zm1.4-4.4-.9-.9a.7.7 0 0 1 1-1l.9.9a.7.7 0 1 1-1 1Zm4.6-3.4a.7.7 0 0 1 1.4 0V8a.7.7 0 0 1-1.4 0Zm2.3 10a1.9 1.9 0 1 1-2.6-2.7l4.6-3.7-2 5.6c0 .3 0 .5 0 .8Zm6.3-2.2h-1.2a.7.7 0 0 1 0-1.4h1.2a.7.7 0 0 1 0 1.4Zm-1.4-4.4a.7.7 0 0 1-1 0 .7.7 0 0 1 0-1l.9-.9a.7.7 0 0 1 1 1Z"/></svg>
+      </button>
+      <button type="button" class="sq sq-home" data-sq="dashboard" title="الرئيسية" aria-label="الرئيسية">
+        <svg viewBox="0 0 24 24"><path d="M12 3.2 1.8 12h3V21h5.4v-6h3.6v6h5.4v-9h3Z"/><path d="M16.5 4.5h2.4v4l-2.4-2Z"/></svg>
+      </button>
+      <button type="button" class="sq sq-chat" data-sq="notif" title="الإشعارات" aria-label="الإشعارات">
+        <svg viewBox="0 0 24 24"><path d="M2.5 6.2c0-1.8 1.9-3.2 4.2-3.2h6.6c2.3 0 4.2 1.4 4.2 3.2v4c0 1.8-1.9 3.2-4.2 3.2H9.1l-3.6 2.9v-3C3.8 12.8 2.5 11.6 2.5 10.2Z"/><path d="M18.9 7.6c1.6.4 2.6 1.5 2.6 2.8v3.9c0 1.4-1.1 2.5-2.7 2.9v2.6l-3.4-2.6h-3.3c-1.4 0-2.7-.5-3.4-1.3h4.6c3.1 0 5.6-1.9 5.6-4.3Z"/></svg>
+        <em class="sq-n" id="sqNotif" hidden></em>
+      </button>
+      <button type="button" class="sq sq-brief" data-sq="approvals" title="الموافقات" aria-label="الموافقات">
+        <svg viewBox="0 0 24 24"><path d="M9.2 3.5h5.6c.8 0 1.4.6 1.4 1.4v1.6h3.2c1.2 0 2.1.9 2.1 2.1v10.2c0 1.2-.9 2.1-2.1 2.1H4.6c-1.2 0-2.1-.9-2.1-2.1V8.6c0-1.2.9-2.1 2.1-2.1h3.2V4.9c0-.8.6-1.4 1.4-1.4Zm.4 3h4.8V5.3H9.6Z"/></svg>
+        <em class="sq-n" id="sqAppr" hidden></em>
+      </button>
+    </div>
+
+    <div class="nav-tabs" role="tablist">
+      <button type="button" data-tab="all" class="on">كل القوائم</button>
+      <button type="button" data-tab="fav">المفضلة (<span id="favCount">0</span>)</button>
+    </div>
+
+    <label class="nav-search">
+      <input id="navSearch" type="search" placeholder="بحث…" title="ابحث في كل القائمة: حساب، تقرير، مخزن…" aria-label="البحث في القائمة">
+      <span class="nav-search-ico"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span>
+    </label>
+
+    <div class="side-scroll">
+      <nav class="nav" id="nav"></nav>
+
+      <div class="admin-tools">
+        <button type="button" class="danger-btn" id="clearBoxesBtn">تفريغ خزائن محددة</button>
+        <button type="button" class="danger-btn" id="clearMovesBtn">تفريغ الحركات والأرصدة</button>
+      </div>
+
+      <div class="version"><span id="versionText"></span> — <button type="button" class="ver-link" id="refreshBtn">تحديث</button></div>
+    </div>
+
+    <div class="sidebar-footer">
+      <button type="button" class="user-btn" id="userBtn" aria-haspopup="menu" title="حسابي">
+        <span class="avatar" id="userAvatar">م</span>
+        <span class="user-info">
+          <span class="user-name" id="userName">مستخدم</span>
+          <span class="user-role" id="userRole">—</span>
+        </span>
+      </button>
+      <div class="user-menu" id="userMenu" role="menu" hidden>
+        <button type="button" data-um="pass" role="menuitem">🔑 تغيير كلمة المرور</button>
+        <button type="button" data-um="users" id="umUsers" role="menuitem">👥 المستخدمون والصلاحيات</button>
+        <button type="button" data-um="logout" class="um-out" role="menuitem">⎋ تسجيل الخروج</button>
+      </div>
+      <i class="online" id="onlineDot"></i>
+      <button type="button" class="lang" id="langBtn" title="لغة الواجهة">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+        <span>العربية</span><b>AR</b>
+      </button>
+    </div>
+  </aside>
+
+  <!-- المحتوى -->
+  <main class="main">
+    <header class="topbar">
+      <button class="icon-btn menu-btn" id="menuBtn" aria-label="القائمة">
+        <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <div class="title-block">
+        <h1 id="pageTitle">لوحة المعلومات</h1>
+        <div class="crumbs" id="pageSub">جارٍ التحميل…</div>
+      </div>
+      <div class="topbar-actions">
+        <div class="search">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="globalSearch" type="search" placeholder="بحث في كل السجلات...">
+        </div>
+        <div class="notif-wrap">
+          <button type="button" class="icon-btn notif-btn" id="notifBtn" title="الإشعارات" aria-label="الإشعارات">
+            <svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><em class="notif-n"></em>
+          </button>
+          <div class="notif-panel" id="notifPanel" hidden></div>
+        </div>
+        <div class="sync" id="syncPill"><i></i><span>جارٍ الاتصال…</span></div>
+      </div>
+      <nav class="tabbar" id="tabBar" role="tablist" aria-label="الصفحات المفتوحة" hidden></nav>
+    </header>
+
+    <div class="ro-banner" id="roBanner" hidden>وضع المشاهدة فقط — لا يمكنك إضافة أو تعديل البيانات. اطلب من مالك النظام صلاحية "مساهم" أو "محرر".</div>
+    <section class="content" id="content"></section>
+  </main>
+
+  <!-- نافذة الإضافة/التعديل -->
+  <div class="modal" id="modal" aria-hidden="true">
+    <form class="modal-box" id="modalForm">
+      <div class="modal-head">
+        <h3 id="modalTitle">إضافة سجل</h3>
+        <button type="button" class="icon-btn" data-close aria-label="إغلاق">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-foot">
+        <button type="button" class="btn ghost" data-close>إغلاق</button>
+        <button type="submit" class="btn primary" id="saveBtn">حفظ</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <div id="printArea"></div>
+  <script src="i18n.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
