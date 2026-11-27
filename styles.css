@@ -1448,3 +1448,17 @@ tbody tr:hover td { background: #f7f9fc; }
 
 /* الكود التلقائي */
 .input.auto-code { background: #f1f5fb; color: #1e3a8a; font-weight: 700; cursor: default; }
+
+/* القائمة الجانبية على الكمبيوتر: أعرض بحوالي 1 سم (84 ← 122px) وخط أوضح */
+@media (min-width: 901px) {
+  :root { --sidebar-w: 122px; }
+  .nav-head { font-size: 11.5px; padding: 7px 4px; }
+  .nav-group.lvl1 > .nav-head { font-size: 11px; }
+  .nav-leaf a { font-size: 11px; }
+  .nav-ico { width: 34px; height: 34px; }
+  .nav-ico svg { width: 19px; height: 19px; }
+  .brand-logo { width: 40px; height: 40px; }
+  .nav-tabs button { font-size: 11px; }
+  .nav-search input { font-size: 11px; }
+  .sq { height: 32px; }
+}
