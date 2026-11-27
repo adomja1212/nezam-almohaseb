@@ -34,7 +34,7 @@
     'workers', 'dailyLabor', 'advances', 'cashboxes', 'receipts', 'payments', 'boxTransfers', 'journal', 'salesInvoices', 'salesQuotes', 'salesReturns',
     'purchaseOrders', 'purchaseInvoices', 'purchaseReturns', 'stockIn', 'stockOut', 'transfers', 'machines', 'machineOps', 'maintenanceOrders', 'maintenancePlan',
     'units', 'costCenters', 'crops', 'girlsFixed', 'girlsTemp', 'bangladesh', 'branches', 'salesItems', 'supplierAccruals', 'openingBalances',
-    'expenseOrders', 'supplierPayReqs', 'purchaseQuotes', 'fixedAssets'];
+    'expenseOrders', 'supplierPayReqs', 'purchaseQuotes', 'fixedAssets', 'stockRequests'];
   const TX_TABLES = ['journal', 'openingBalances', 'receipts', 'payments', 'boxTransfers', 'supplierAccruals', 'salesInvoices', 'salesQuotes', 'salesReturns', 'purchaseOrders', 'purchaseInvoices', 'purchaseReturns',
     'stockIn', 'stockOut', 'transfers', 'attendance', 'payroll', 'leaves', 'dailyLabor', 'advances', 'machineOps', 'maintenanceOrders'];
   const APP_NAME = 'Sawah ERP';
@@ -718,6 +718,27 @@
   const chqOpen = r => r.method === 'شيك' && (r.chequeStatus || CHQ_IN[0]) !== 'مرتد' && !['محصّل', 'مصروف'].includes(r.chequeStatus);
   // قائمة "اسم المستفيد" تتغير حسب "اسم الحساب" المختار
   const treasAccOpts = () => leafAccounts().filter(a => !isTreasury(a.code) && a.code !== SYS.chqIn && a.code !== SYS.chqOut).map(accLabel);
+  // نطاق تعامل الخزينة: خزينة الإيرادات للعملاء فقط، والخزينة الرئيسية للموردين والمصروفات (والاستلام فيها بالتحويل من خزينة أو بنك)
+  const BOX_ROLES = ['عام', 'إيرادات — العملاء', 'مصروفات — الموردين والمصروفات'];
+  const boxRole = b => { const x = typeof b === 'string' ? db.cashboxes.find(c => c.name === b) : b; if (!x) return 'عام';
+    if (x.role) return x.role; if (/الإيرادات|الايرادات/.test(x.name)) return BOX_ROLES[1]; if (/الرئيسي/.test(x.name)) return BOX_ROLES[2]; return 'عام'; };
+  const isRevBox = b => boxRole(b) === BOX_ROLES[1], isExpBox = b => boxRole(b) === BOX_ROLES[2];
+  // حسابات السند حسب الخزينة المختارة (kind: 'r' قبض، 'p' صرف)
+  const boxAccOpts = (box, kind) => {
+    const all = leafAccounts().filter(a => !isTreasury(a.code) && a.code !== SYS.chqIn && a.code !== SYS.chqOut);
+    if (isRevBox(box)) return all.filter(a => a.code.startsWith(SYS.customers)).map(accLabel);
+    if (isExpBox(box)) return kind === 'r' ? [] : all.filter(a => a.code.startsWith(SYS.suppliers) || a.code.startsWith(SYS.expenses)).map(accLabel);
+    return all.map(accLabel);
+  };
+  const boxScopeErr = (d, kind) => {
+    if (!d.box) return '';
+    if (kind === 'r' && isExpBox(d.box)) return `"${d.box}" تستلم بالتحويل من خزينة أو بنك فقط — استخدم شاشة التحويلات بين الخزائن والبنوك`;
+    const ok = boxAccOpts(d.box, kind).map(accCode);
+    if (d.account && !ok.includes(accCode(d.account))) return isRevBox(d.box) ? `"${d.box}" تتعامل مع حسابات العملاء فقط` : `"${d.box}" تصرف على الموردين والمصروفات فقط`;
+    return '';
+  };
+  // خزائن الصرف لأوامر الدفع وطلبات الدفع: الخزينة الرئيسية والبنوك (وليست خزينة الإيرادات)
+  const payBoxOpts = () => db.cashboxes.filter(b => isExpBox(b) || isBankBox(b)).map(b => b.name);
   const partyOpts = v => { const code = accCode(v), k = partyKind(code);
     if (k === 'c') return db.customers.filter(c => code === SYS.customers || custAcc(c.name) === code).map(c => c.name);
     if (k === 's') return db.suppliers.filter(s => code === SYS.suppliers || suppAcc(s.name) === code).map(s => s.name);
@@ -954,18 +975,20 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       C('code', 'الكود', CODE), C('name', 'الاسم', { full: true }), C('type', 'النوع', { render: plain, input: 'select', options: opt('خزينة', 'بنك', 'عهدة') }),
       C('accountNo', 'الحساب المرتبط', { input: 'select', options: () => leafAccounts().filter(a => isTreasury(a.code)).map(a => [a.code, accLabel(a)]), render: v => esc(acc(v) ? accLabel(acc(v)) : v) }),
       C('bankAccount', 'رقم الحساب بالبنك', { optional: true, cls: 'code' }),
+      C('role', 'نطاق التعامل', { input: 'select', optional: true, allowEmpty: '— تلقائي حسب الاسم —', options: () => BOX_ROLES, render: (v, r) => plain(boxRole(r)) }),
       branchField('الفرع', { allowEmpty: '—', formOnly: false, render: v => v ? plain(v) : '—' }),
       C('balance', 'الرصيد', computed(r => acc(r.accountNo) ? ownBal(acc(r.accountNo)) : 0, { total: true }))],
       actions: [{ icon: 'cash', title: 'فتح صفحة الحركات', fn: r => goTo('box/' + r.id) }, { icon: 'list', title: 'كشف حركة الخزينة', fn: r => openLedger(r.accountNo) }],
       validate: (d, rec) => db.cashboxes.some(b => b.accountNo === d.accountNo && b !== rec) ? 'هذا الحساب مرتبط بخزينة أخرى' : '' },
     receipts: { title: 'سندات القبض', sub: 'اختر اسم الحساب ثم المستفيد من قائمته — يُرحّل بعد الاعتماد: من حـ/ الخزينة أو البنك إلى حـ/ الحساب المختار', single: 'سند قبض', key: 'no', cols: [
       C('no', 'رقم الحركة', CODE), C('date', 'تاريخ الحركة', D), boxField(), branchField(),
-      C('account', 'اسم الحساب', { input: 'select', optional: true, allowEmpty: '— اختر الحساب —', options: treasAccOpts, full: true, render: (v, r) => `<span class="hint">${esc(v || (isCustomer(r.party) ? accLabel(acc(custAcc(r.party)) || { code: '', name: '' }) : '—'))}</span>` }),
+      C('account', 'اسم الحساب', { input: 'select', optional: true, allowEmpty: '— اختر الحساب —', dep: ['box'], options: v => boxAccOpts(v?.box, 'r'), full: true, render: (v, r) => `<span class="hint">${esc(v || (isCustomer(r.party) ? accLabel(acc(custAcc(r.party)) || { code: '', name: '' }) : '—'))}</span>` }),
       C('party', 'اسم المستفيد / الطرف', { optional: true, full: true, dyn: true, suggest: v => partyOpts(v?.account), render: (v, r) => esc(partyName(r)) }),
       C('invoice', 'سداد فاتورة', { input: 'select', optional: true, allowEmpty: '— بدون —', formOnly: true, options: () => db.salesInvoices.map(i => [i.no, `${i.no} — ${i.customer}`]), when: f => partyKind(accCode(f.account)) === 'c' }),
       C('amount', 'المبلغ', { ...M, total: true }), ...bankFields(bankSide('box'), '', CHQ_IN, false), C('desc', 'البيان', { full: true, optional: true })],
       defaults: () => ({ method: 'نقدي' }),
       validate: d => {
+        const se = boxScopeErr(d, 'r'); if (se) return se;
         const be = bankCheck(d, bankSide('box'), false); if (be) return be;
         const pe = partyCheck(d); if (pe) return pe;
         const inv = db.salesInvoices.find(i => i.no === d.invoice);
@@ -973,7 +996,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       } },
     boxTransfers: { title: 'التحويلات بين الخزائن والبنوك', sub: 'يُرحّل: من حـ/ الخزينة أو البنك المحوَّل إليه إلى حـ/ المحوَّل منه', single: 'تحويل', key: 'no', prefix: 'BT-', cols: [
       C('no', 'رقم التحويل', CODE), C('date', 'التاريخ', D), C('from', 'من خزينة / بنك', { input: 'select', options: names('cashboxes') }),
-      C('to', 'إلى خزينة / بنك', { input: 'select', options: names('cashboxes') }), C('amount', 'المبلغ', { ...M, total: true }),
+      C('to', 'إلى خزينة / بنك', { input: 'select', dep: ['from'], options: v => db.cashboxes.map(b => b.name).filter(n => n !== v?.from) }), C('amount', 'المبلغ', { ...M, total: true }),
       ...bankFields(bankSide('from', 'to'), 'اسم المستفيد'), C('desc', 'البيان', { full: true, optional: true })],
       defaults: () => ({ method: 'نقدي' }),
       onSelect: { from: f => { f.method.value = isBankBox(f.from.value) && isBankBox(f.to.value) ? 'تحويل بنكي' : 'نقدي'; }, to: f => { f.method.value = isBankBox(f.from.value) && isBankBox(f.to.value) ? 'تحويل بنكي' : 'نقدي'; } },
@@ -985,12 +1008,13 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       } },
     payments: { title: 'سندات الصرف', sub: 'اختر اسم الحساب ثم المستفيد من قائمته — يُرحّل بعد الاعتماد: من حـ/ الحساب المختار إلى حـ/ الخزينة أو البنك', single: 'سند صرف', key: 'no', cols: [
       C('no', 'رقم الحركة', CODE), C('date', 'تاريخ الحركة', D), boxField(), branchField(),
-      C('account', 'اسم الحساب', { input: 'select', optional: true, allowEmpty: '— اختر الحساب —', options: treasAccOpts, full: true, render: (v, r) => `<span class="hint">${esc(v || (isSupplier(r.party) ? accLabel(acc(suppAcc(r.party)) || { code: '', name: '' }) : '—'))}</span>` }),
+      C('account', 'اسم الحساب', { input: 'select', optional: true, allowEmpty: '— اختر الحساب —', dep: ['box'], options: v => boxAccOpts(v?.box, 'p'), full: true, render: (v, r) => `<span class="hint">${esc(v || (isSupplier(r.party) ? accLabel(acc(suppAcc(r.party)) || { code: '', name: '' }) : '—'))}</span>` }),
       C('party', 'اسم المستفيد', { optional: true, full: true, dyn: true, suggest: v => partyOpts(v?.account), render: (v, r) => esc(partyName(r)) }),
       C('invoice', 'سداد فاتورة', { input: 'select', optional: true, allowEmpty: '— بدون —', formOnly: true, dep: ['party', 'account'], options: v => db.purchaseInvoices.filter(i => !v?.party || i.supplier === v.party).map(i => [i.no, `${i.no} — ${i.supplier}`]), when: f => partyKind(accCode(f.account)) === 's' }),
       C('amount', 'المبلغ', { ...M, total: true }), ...bankFields(bankSide('box'), '', CHQ_OUT, false), C('desc', 'البيان', { full: true, optional: true })],
       defaults: () => ({ method: 'نقدي' }),
       validate: (d, rec) => {
+        const se = boxScopeErr(d, 'p'); if (se) return se;
         const be = bankCheck(d, bankSide('box'), true, CHQ_OUT); if (be) return be;
         const pe = partyCheck(d); if (pe) return pe;
         const inv = db.purchaseInvoices.find(i => i.no === d.invoice);
@@ -1146,7 +1170,9 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
     // ===== المشتريات =====
     purchaseOrders: { title: 'أوامر الشراء', sub: 'طلبات الشراء (لا تُرحّل حتى تصدر الفاتورة)', single: 'أمر شراء', key: 'no', filter: 'status', cols: [
       C('no', 'رقم الأمر', CODE), C('supplier', 'المورد', { input: 'select', options: names('suppliers'), full: true }), C('date', 'التاريخ', D), C('delivery', 'موعد التوريد', D),
-      C('amount', 'القيمة', { ...M, total: true }), C('status', 'الحالة', status('جديد', 'معتمد', 'مستلم'))],
+      C('warehouse', 'المخزن', { input: 'select', options: names('warehouses') }), C('lines', 'الأصناف', { input: 'lines', formOnly: true, full: true, pickOn: ['warehouse'], pick: v => v.warehouse ? i => !i.warehouse || i.warehouse === v.warehouse || stockAt(i.name, v.warehouse) > 0 : null }), C('itemsSum', 'الأصناف', { compute: linesSummary, render: (v, r) => `${esc(v || r.items || '')}` }),
+      C('amount', 'القيمة (تُحسب من الأصناف)', { ...M, total: true, optional: true }), C('status', 'الحالة', status('جديد', 'معتمد', 'مستلم'))],
+      validate: d => { if (linesOf(d).length) d.amount = +docTotals(d).sub.toFixed(2); if (!linesOf(d).length && !+d.amount) return 'أضف الأصناف من المخزن'; },
       actions: [{ icon: 'cart', title: 'تحويل إلى فاتورة مشتريات', target: 'purchaseInvoices', show: r => r.status !== 'جديد',
         fn: r => openRecordForm('purchaseInvoices', null, { sacc: acc(suppAcc(r.supplier)) ? accLabel(acc(suppAcc(r.supplier))) : '', supplier: r.supplier, amount: r.amount }, () => { const x = db.purchaseOrders.find(q => q.id === r.id); if (x) x.status = 'مستلم'; }), write: true }] },
     purchaseInvoices: { title: 'فواتير المشتريات', sub: 'موردو البضاعة (محاصيل / بضاعة / نقدي): المخزون المستلم والفرع ورقم فاتورة المورد · موردو الخدمات (سيارات / برادات / عمالة / معدات): الشهر والحساب المقابل — يُرحّل بعد الاعتماد إلى حـ/ المورد', single: 'فاتورة شراء', key: 'no', filter: 'status', cols: [
@@ -1302,15 +1328,17 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
     // ===== أوامر وطلبات الدفع (لا تُرحّل — تتحول إلى سند صرف بعد الاعتماد) =====
     expenseOrders: { title: 'أوامر دفع المصروفات', prefix: 'EXP-', sub: 'طلب صرف مصروف على حساب ومركز تكلفة — بعد الاعتماد يتحول إلى سند صرف', single: 'أمر دفع مصروف', key: 'no', filter: 'status', cols: [
       C('no', 'رقم الأمر', CODE), C('date', 'التاريخ', D), branchField(),
+      C('box', 'يُصرف من (الخزينة الرئيسية / البنوك)', { input: 'select', options: payBoxOpts }),
       C('account', 'حساب المصروف', { input: 'select', options: expAccOpts, full: true, render: v => `<span class="hint">${esc(v || '')}</span>` }),
       C('costCenter', 'مركز التكلفة', { input: 'select', optional: true, allowEmpty: '— بدون —', options: () => db.costCenters.map(c => c.name) }),
       C('party', 'المستفيد', { optional: true }), C('amount', 'المبلغ', { ...M, total: true }),
       C('desc', 'البيان', { full: true, optional: true }), C('status', 'الحالة', status('جديد', 'معتمد', 'مدفوع', 'مرفوض'))],
       actions: [{ icon: 'pay', title: 'صرف — إنشاء سند صرف', target: 'payments', show: r => r.status === 'معتمد', write: true,
-        fn: r => openRecordForm('payments', null, { account: r.account, party: r.party || '', amount: r.amount, desc: `أمر دفع مصروف ${r.no}${r.desc ? ' — ' + r.desc : ''}`, branch: r.branch || '' },
+        fn: r => openRecordForm('payments', null, { box: r.box || payBoxOpts()[0] || '', account: r.account, party: r.party || '', amount: r.amount, desc: `أمر دفع مصروف ${r.no}${r.desc ? ' — ' + r.desc : ''}`, branch: r.branch || '' },
           () => { const x = db.expenseOrders.find(q => q.id === r.id); if (x) x.status = 'مدفوع'; }) }] },
     supplierPayReqs: { title: 'طلبات دفع الموردين', prefix: 'SPR-', sub: 'طلب سداد لمورد (كامل الرصيد أو فاتورة محددة) — بعد الاعتماد يتحول إلى سند صرف', single: 'طلب دفع مورد', key: 'no', filter: 'status', cols: [
       C('no', 'رقم الطلب', CODE), C('date', 'التاريخ', D),
+      C('box', 'يُصرف من (الخزينة الرئيسية / البنوك)', { input: 'select', options: payBoxOpts }),
       C('sacc', 'الحساب الرئيسي', { input: 'select', optional: true, allowEmpty: '— كل حسابات الموردين —', options: () => childrenOf(SYS.suppliers).map(accLabel), formOnly: true }),
       C('supplier', 'المورد', { input: 'select', dep: ['sacc'], options: v => db.suppliers.filter(x => !v?.sacc || suppAcc(x.name) === accCode(v.sacc)).map(x => x.name), full: true }),
       C('due', 'المستحق للمورد', computed(r => suppBal(r.supplier))),
@@ -1320,14 +1348,28 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       validate: d => { const inv = db.purchaseInvoices.find(i => i.no === d.invoice); if (inv && inv.supplier !== d.supplier) return `الفاتورة ${inv.no} تخص ${inv.supplier}`; },
       actions: [{ icon: 'pay', title: 'صرف — إنشاء سند صرف', target: 'payments', show: r => r.status === 'معتمد', write: true,
         fn: r => { const a = acc(suppAcc(r.supplier));
-          openRecordForm('payments', null, { account: a ? accLabel(a) : '', party: r.supplier, invoice: r.invoice || '', amount: r.amount, desc: `طلب دفع مورد ${r.no}${r.desc ? ' — ' + r.desc : ''}` },
+          openRecordForm('payments', null, { box: r.box || payBoxOpts()[0] || '', account: a ? accLabel(a) : '', party: r.supplier, invoice: r.invoice || '', amount: r.amount, desc: `طلب دفع مورد ${r.no}${r.desc ? ' — ' + r.desc : ''}` },
             () => { const x = db.supplierPayReqs.find(q => q.id === r.id); if (x) x.status = 'مدفوع'; }); } }] },
     purchaseQuotes: { title: 'عروض أسعار الموردين', prefix: 'PQ-', sub: 'عروض الأسعار الواردة من الموردين — العرض المقبول يتحول إلى أمر توريد', single: 'عرض سعر', key: 'no', filter: 'status', cols: [
       C('no', 'رقم العرض', CODE), C('date', 'التاريخ', D), C('supplier', 'المورد', { input: 'select', options: names('suppliers'), full: true }),
-      C('items', 'الأصناف / الخدمة', { full: true }), C('amount', 'القيمة', { ...M, total: true }), C('validUntil', 'صالح حتى', { ...D, optional: true }),
+      C('warehouse', 'المخزن', { input: 'select', options: names('warehouses') }), C('lines', 'الأصناف', { input: 'lines', formOnly: true, full: true, pickOn: ['warehouse'], pick: v => v.warehouse ? i => !i.warehouse || i.warehouse === v.warehouse || stockAt(i.name, v.warehouse) > 0 : null }), C('itemsSum', 'الأصناف', { compute: linesSummary, render: (v, r) => `${esc(v || r.items || '')}` }),
+      C('amount', 'القيمة (تُحسب من الأصناف)', { ...M, total: true, optional: true }), C('validUntil', 'صالح حتى', { ...D, optional: true }),
       C('notes', 'ملاحظات', { optional: true, full: true, formOnly: true }), C('status', 'الحالة', status('جديد', 'مقبول', 'مرفوض'))],
       actions: [{ icon: 'cart', title: 'تحويل إلى أمر توريد', target: 'purchaseOrders', show: r => r.status === 'مقبول', write: true,
-        fn: r => openRecordForm('purchaseOrders', null, { supplier: r.supplier, amount: r.amount, date: today() }) }] },
+        fn: r => openRecordForm('purchaseOrders', null, { supplier: r.supplier, warehouse: r.warehouse || '', lines: r.lines || [], amount: r.amount, date: today() }) }],
+      validate: d => { if (linesOf(d).length) d.amount = +docTotals(d).sub.toFixed(2); if (!linesOf(d).length && !+d.amount) return 'أضف الأصناف من المخزن'; } },
+    stockRequests: { title: 'طلبات الصرف', sub: 'طلب صرف أصناف من مخزن لمركز تكلفة — بعد الاعتماد يتحول إلى إذن صرف', single: 'طلب صرف', key: 'no', prefix: 'MR-', filter: 'status', cols: [
+      C('no', 'رقم الطلب', CODE), C('date', 'التاريخ', D),
+      C('warehouse', 'المخزن', { input: 'select', options: names('warehouses') }),
+      C('costCenter', 'جهة الصرف (مركز التكلفة)', { input: 'select', optional: true, allowEmpty: '— اختر —', options: () => db.costCenters.map(c => c.name) }),
+      branchField(),
+      C('lines', 'الأصناف المطلوبة', { input: 'lines', formOnly: true, full: true, pickOn: ['warehouse'], pick: v => v.warehouse ? i => stockAt(i.name, v.warehouse) > 0 : null }),
+      C('itemsSum', 'الأصناف', { compute: linesSummary, render: v => esc(v) }),
+      C('notes', 'البيان', { optional: true, full: true, formOnly: true }), C('status', 'الحالة', status('جديد', 'معتمد', 'منفذ', 'مرفوض'))],
+      validate: d => { if (!linesOf(d).length) return 'أضف الأصناف المطلوبة'; },
+      actions: [{ icon: 'pay', title: 'تنفيذ — إنشاء إذن صرف', target: 'stockOut', show: r => r.status === 'معتمد', write: true,
+        fn: r => openRecordForm('stockOut', null, { warehouse: r.warehouse, costCenter: r.costCenter || '', branch: r.branch || '', lines: r.lines || [], notes: `طلب صرف ${r.no}${r.notes ? ' — ' + r.notes : ''}` },
+          () => { const x = db.stockRequests.find(q => q.id === r.id); if (x) x.status = 'منفذ'; }) }] },
     // ===== الأصول الثابتة: الإهلاك بطريقة القسط الثابت حتى اليوم =====
     fixedAssets: { title: 'الأصول الثابتة', sub: 'سجل الأصول — الإهلاك بالقسط الثابت: (التكلفة − الخردة) ÷ العمر الإنتاجي، محسوب حتى اليوم', single: 'أصل ثابت', key: 'name', filter: 'category', cols: [
       C('code', 'الكود', CODE), C('name', 'اسم الأصل', { full: true }),
@@ -1470,7 +1512,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       { title: 'فواتير المبيعات', icon: 'sales', items: [...SALE_TYPES.map(([k]) => 'si_' + k), 'salesInvoices'] },
       { title: 'المردودات', icon: 'sales', items: [...SALE_TYPES.map(([k]) => 'sr_' + k), 'salesReturns'] },
       { title: 'تقارير المبيعات', icon: 'trend', items: ['rep/salesRep', 'rep/salesCust', 'rep/salesCat', 'rep/salesMonth'] }] },
-    { title: 'إدارة المخازن', icon: 'box', items: () => [...db.warehouses.slice().sort((a, b) => String(a.code).localeCompare(String(b.code))).map(w => 'wh/' + w.id), 'stockBalances', 'stockIn', 'stockOut', 'transfers', 'rep/stkMove', 'rep/stkLow', 'rep/stkValue'] },
+    { title: 'إدارة المخازن', icon: 'box', items: () => [...db.warehouses.slice().sort((a, b) => String(a.code).localeCompare(String(b.code))).map(w => 'wh/' + w.id), 'stockBalances', 'stockRequests', 'purchaseQuotes', 'purchaseOrders', 'stockIn', 'stockOut', 'transfers', 'rep/stkMove', 'rep/stkLow', 'rep/stkValue'] },
     { title: 'إدارة الميكنة', icon: 'truck', items: ['machineOps', 'machines', 'rep/machRep'] },
     { title: 'إدارة الصيانة', icon: 'wrench', items: ['maintenanceOrders', 'maintenancePlan', 'rep/maintPlanRep'] },
     { title: 'إدارة الأصول الثابتة', icon: 'shield', items: ['fixedAssets', 'rep/assetRep'] },
@@ -1488,7 +1530,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
     cashboxes: '🗃️', bankMoves: '🧾', receipts: '📥', payments: '📤', boxTransfers: '🔄', import: '📥', salesInvoices: '🧾', salesQuotes: '💬', salesReturns: '↩️', si_local: '🏪', si_seedlings: '🌱', si_scrap: '♻️', si_livestock: '🐄', sr_local: '↩️', sr_seedlings: '↩️', sr_scrap: '↩️', sr_livestock: '↩️',
     purchaseOrders: '📝', purchaseInvoices: '🧾', purchaseReturns: '↪️', stockBalances: '📦', stockIn: '➕', stockOut: '➖', transfers: '🔁',
     attendance: '🕘', payroll: '💰', leaves: '🌴', dailyLabor: '👷', advances: '💵', machineOps: '⛽', maintenanceOrders: '🔧', maintenancePlan: '🗓️',
-    expenseOrders: '🧾', supplierPayReqs: '📨', purchaseQuotes: '💬', fixedAssets: '🏗️', customers: '🤝', suppliers: '🚚', items: '🏷️', warehouses: '🏬', employees: '👔', units: '⚖️', salesItems: '🧺', supplierAccruals: '🗓️', openingBalances: '🧮', branches: '📍', costCenters: '🎯', crops: '🌱', girlsFixed: '👩‍🌾', girlsTemp: '👩', bangladesh: '🧑‍🔧', workers: '🦺', departments: '🏢', machines: '🚜',
+    expenseOrders: '🧾', supplierPayReqs: '📨', stockRequests: '📋', purchaseQuotes: '💬', fixedAssets: '🏗️', customers: '🤝', suppliers: '🚚', items: '🏷️', warehouses: '🏬', employees: '👔', units: '⚖️', salesItems: '🧺', supplierAccruals: '🗓️', openingBalances: '🧮', branches: '📍', costCenters: '🎯', crops: '🌱', girlsFixed: '👩‍🌾', girlsTemp: '👩', bangladesh: '🧑‍🔧', workers: '🦺', departments: '🏢', machines: '🚜',
   };
   // مسار كل صفحة داخل القائمة (لفتح المجموعات التي تحتويها)
   let pagePath = {};
@@ -2156,7 +2198,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
     supplierAccruals: 'SA-', salesInvoices: 'SL-', salesQuotes: 'SQ-', salesReturns: 'SR-', purchaseQuotes: 'PQ-', purchaseOrders: 'PO-',
     purchaseInvoices: 'PI-', purchaseReturns: 'PR-', stockIn: 'GRN-', stockOut: 'GIN-', transfers: 'TR-', maintenanceOrders: 'MO-',
     expenseOrders: 'EXP-', supplierPayReqs: 'SPR-', payroll: 'PAY-', dailyLabor: 'DL-', advances: 'ADV-', machineOps: 'OP-', leaves: 'LV-',
-    attendance: 'ATT-', maintenancePlan: 'MP-' };
+    attendance: 'ATT-', maintenancePlan: 'MP-', stockRequests: 'MR-' };
   const autoNo = (T, key) => nextNo(db[T] || [], key) || ((AUTO_PREFIX[T] || modules[T]?.prefix || (key === 'code' ? 'C-' : 'N-')) + '0001');
   const nextNo = (list, key) => {
     const nums = list.map(r => String(r[key] ?? '').match(/^(.*?)(\d+)$/)).filter(Boolean);
@@ -2992,7 +3034,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
   const ROLES = {
     admin: { title: 'مدير النظام', build: () => ({ perms: grant(permPages(), 'vaed'), special: SPECIALS.map(s => s[0]) }) },
     accountant: { title: 'محاسب', build: () => ({ perms: { ...grant(permPages(), 'v'), ...grant(['accounts', 'journal', 'cashboxes', 'receipts', 'payments', 'expenseOrders', 'supplierPayReqs', 'fixedAssets', 'supplierAccruals', 'salesInvoices', 'salesReturns', 'purchaseInvoices', 'purchaseReturns', 'payroll', 'customers', 'suppliers'], 'vae') }, special: ['export'] }) },
-    storekeeper: { title: 'أمين مخزن', build: () => ({ perms: { ...grant(['dashboard', 'suppliers', 'purchaseOrders'], 'v'), ...grant(['items', 'units', 'warehouses', 'stockBalances', 'stockIn', 'stockOut', 'transfers'], 'vae'), ...grant(['branches', 'costCenters'], 'v') }, special: ['export'] }) },
+    storekeeper: { title: 'أمين مخزن', build: () => ({ perms: { ...grant(['dashboard', 'suppliers', 'purchaseOrders'], 'v'), ...grant(['items', 'units', 'warehouses', 'stockBalances', 'stockIn', 'stockOut', 'transfers', 'stockRequests', 'purchaseQuotes', 'purchaseOrders'], 'vae'), ...grant(['branches', 'costCenters'], 'v') }, special: ['export'] }) },
     sales: { title: 'مندوب مبيعات', build: () => ({ perms: { ...grant(['dashboard', 'items', 'stockBalances'], 'v'), ...grant(['customers', 'salesItems', 'salesInvoices', 'salesQuotes', 'salesReturns', 'receipts'], 'vae') }, special: [] }) },
     hr: { title: 'شئون العاملين', build: () => ({ perms: { ...grant(['dashboard'], 'v'), ...grant(['employees', 'girlsFixed', 'girlsTemp', 'bangladesh', 'costCenters', 'attendance', 'payroll', 'leaves', 'departments', 'workers', 'dailyLabor', 'advances'], 'vae') }, special: ['export'] }) },
     maint: { title: 'الميكنة والصيانة', build: () => ({ perms: { ...grant(['dashboard', 'items', 'stockBalances'], 'v'), ...grant(['machines', 'machineOps', 'maintenanceOrders', 'maintenancePlan', 'stockOut'], 'vae') }, special: [] }) },
