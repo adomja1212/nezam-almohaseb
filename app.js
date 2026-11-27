@@ -2886,7 +2886,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
         <div class="card-head"><div><h3>النسخ الاحتياطي والاستعادة</h3><div class="sub">ملف JSON يحتوي على كل الجداول والإعدادات</div></div></div>
         <div class="card-body" style="display:flex;gap:10px;flex-wrap:wrap">
           <button class="btn ghost ${canSp('backup') ? '' : 'hide'}" id="backupBtn">${icons.export}تنزيل نسخة احتياطية</button>
-          <label class="btn primary admin-only ${canSp('backup') ? '' : 'hide'}" style="cursor:pointer">${icons.upload || icons.export}استعادة نسخة احتياطية<input type="file" id="restoreInput" accept=".json,application/json" hidden></label>
+          <label class="btn primary admin-only ${canSp('backup') ? '' : 'hide'}" style="cursor:pointer">${icons.upload || icons.export}استعادة نسخة احتياطية<input type="file" id="restoreInput" accept="*/*" hidden></label>
           ${store.mode === 'local' ? '<button class="btn ghost" id="demoBtn">تحميل البيانات التجريبية</button>' : ''}
         </div>
       </div>
