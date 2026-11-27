@@ -1402,3 +1402,43 @@ tbody tr:hover td { background: #f7f9fc; }
 .rb-chip input { margin: 0; }
 .rb-mode .df-b { height: 30px; padding: 0 12px; border: 1px solid #c8c8c8; border-radius: 3px; background: #fff; color: #333; font: inherit; font-size: 13px; cursor: pointer; }
 .rb-mode .df-b.on { background: var(--steel); border-color: var(--steel); color: #fff; font-weight: 700; }
+
+/* ===== شاشة الدخول — تصميم Sawah System ===== */
+.auth { background: #eef3fb; }
+.auth-wrap { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.auth-brand.hero { background: #84b9fa url("login-hero.jpg") center top / 100% auto no-repeat; padding: 0; order: 2; }
+.auth-panel { z-index: 1; }
+.auth-brand.hero::before, .auth-brand.hero::after, .auth-brand.hero .ab-shapes, .auth-brand.hero .ab-inner { display: none; }
+.auth-brand.hero .ab-foot { position: absolute; bottom: 14px; inset-inline: 0; text-align: center; color: rgba(255,255,255,.85); text-shadow: 0 1px 3px rgba(0,0,0,.4); font-size: 12px; }
+.auth-panel { position: relative; overflow: hidden; background: linear-gradient(180deg, #f7faff 0%, #ffffff 60%); }
+.auth-panel::before { content: ""; position: absolute; top: 0; inset-inline: 0; height: 190px; pointer-events: none;
+  background: linear-gradient(100deg, #0b3d9c 0%, #1565d8 55%, #4aa3f0 100%); clip-path: polygon(0 0, 100% 0, 100% 35%, 0 100%); opacity: .95; }
+.auth-panel::after { content: ""; position: absolute; top: 0; inset-inline: 0; height: 210px; pointer-events: none;
+  background: linear-gradient(100deg, rgba(74,163,240,.35), rgba(255,255,255,0)); clip-path: polygon(0 0, 100% 0, 100% 48%, 0 100%); }
+.auth-panel > * { position: relative; z-index: 1; }
+.auth-card { background: rgba(255,255,255,.96); border-radius: 26px 26px 22px 22px; border: 1px solid #dbe5f5; box-shadow: 0 30px 70px rgba(11,61,156,.16); }
+.auth-card .ac-head { text-align: center; margin-bottom: 18px; }
+.auth-card .ac-head h2 { color: #0b3d9c; }
+#authForm.login .af > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+#authForm .af-in { height: 58px; border: 1.5px solid #b9cbe8; border-radius: 10px; background: #fff; overflow: hidden; }
+#authForm .af-in > svg { width: 58px; height: 100%; padding: 15px; margin: 0; background: #dbe8fb; color: #0b3d9c; border-inline-end: 1.5px solid #b9cbe8; box-sizing: border-box; }
+#authForm .af-in input { font-size: 17px; padding: 0 16px; }
+#authForm .af-in input::placeholder { color: #3a4a66; font-weight: 600; }
+#authForm .af-in:focus-within { border-color: #1565d8; box-shadow: 0 0 0 4px rgba(21,101,216,.14); }
+#authForm .af-in:focus-within > svg { background: #cfe0fa; color: #0b3d9c; }
+#authForm .remember span { font-size: 15px; font-weight: 700; color: #1d2b45; }
+#authForm .remember i { width: 24px; height: 24px; border-radius: 6px; }
+#authForm .remember input:checked + i { background: #1565d8; border-color: #1565d8; }
+.af-submit.go { height: 60px; border-radius: 999px; background: linear-gradient(180deg, #2f7be6 0%, #0b4fc0 55%, #0a3f9e 100%);
+  box-shadow: 0 10px 24px rgba(11,79,192,.35), inset 0 1px 0 rgba(255,255,255,.35); font-size: 20px; letter-spacing: .3px; }
+.af-submit.go span { display: inline-flex; align-items: center; justify-content: center; gap: 14px; }
+.af-submit.go .go-ic { width: 34px; height: 34px; border-radius: 50%; background: #fff; color: #0b4fc0; display: inline-grid; place-items: center; order: 2; }
+.af-submit.go .go-ic svg { width: 20px; height: 20px; }
+@media (max-width: 900px) {
+  .auth-wrap { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  .auth-brand.hero { order: 0; display: block !important; min-height: 0; height: min(76vw, 340px); background-size: 100% auto; background-position: center top; }
+  .auth-brand.hero .ab-foot { display: none; }
+  .auth-panel { padding: 0 16px 28px; justify-content: flex-start; }
+  .auth-panel::before, .auth-panel::after { display: none; }
+  .auth-card { margin-top: -16px; padding: 26px 20px 22px; }
+}

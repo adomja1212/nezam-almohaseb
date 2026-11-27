@@ -3021,21 +3021,21 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
         <label class="af"><span>الاسم بالكامل</span>${inputBox(IC.id, 'name="name" required maxlength="60" placeholder="مثال: أحمد الصاوي"')}</label>
         <label class="af"><span>اسم المستخدم</span>${inputBox(IC.user, 'name="username" required autocomplete="username" placeholder="مثال: admin" dir="ltr"')}</label>
         <div class="af-2">
-          <label class="af"><span>كلمة المرور</span>${inputBox(IC.lock, 'type="password" name="password" required autocomplete="new-password" placeholder="6 أحرف على الأقل" dir="ltr"', true)}</label>
+          <label class="af"><span>كلمة المرور</span>${inputBox(IC.lock, 'type="password" name="password" required autocomplete="new-password" placeholder="8 أحرف على الأقل (حروف وأرقام)" dir="ltr"', true)}</label>
           <label class="af"><span>تأكيد كلمة المرور</span>${inputBox(IC.lock, 'type="password" name="confirm" required autocomplete="new-password" dir="ltr"', true)}</label>
         </div>
         <div class="af-err" role="alert"></div>
         <button class="af-submit" type="submit"><span>إنشاء الحساب والدخول</span></button>
       </form>`;
     } else {
-      form = `<form class="auth-card" id="authForm" autocomplete="on">
-        <div class="ac-head"><div class="ac-logo">${esc(letter)}</div><h2>تسجيل الدخول</h2><p>أهلاً بعودتك! أدخل بيانات حسابك للمتابعة</p></div>
+      form = `<form class="auth-card login" id="authForm" autocomplete="on">
+        <div class="ac-head"><h2>تسجيل الدخول</h2><p>أدخل اسم المستخدم وكلمة المرور</p></div>
         ${notice ? `<div class="af-note">${esc(notice)}</div>` : ''}
         <label class="af"><span>اسم المستخدم</span>${inputBox(IC.user, `name="username" required autocomplete="username" dir="ltr" value="${esc(lastUser)}" placeholder="اسم المستخدم"`)}</label>
-        <label class="af"><span>كلمة المرور</span>${inputBox(IC.lock, `type="password" name="password" required autocomplete="current-password" dir="ltr" placeholder="••••••••" ${rem ? `value="${SAVED_PW}" data-saved="1"` : ''}`, !rem)}</label>
+        <label class="af"><span>كلمة المرور</span>${inputBox(IC.lock, `type="password" name="password" required autocomplete="current-password" dir="ltr" placeholder="كلمة المرور" ${rem ? `value="${SAVED_PW}" data-saved="1"` : ''}`, !rem)}</label>
         ${rem ? '<div class="af-saved">🔐 كلمة المرور محفوظة على هذا الجهاز — اضغط "تسجيل الدخول"</div>' : ''}
         <div class="af-row">
-          <label class="remember"><input type="checkbox" name="remember" ${rem ? 'checked' : ''}><i>${IC.check}</i><span>حفظ اسم المستخدم وكلمة المرور على هذا الجهاز</span></label>
+          <label class="remember"><input type="checkbox" name="remember" ${rem ? 'checked' : ''}><i>${IC.check}</i><span>حفظ كلمة المرور</span></label>
           <button type="button" class="forgot" id="forgotBtn">نسيت كلمة المرور؟</button>
         </div>
         <div class="af-forgot" id="forgotBox" hidden>
@@ -3044,12 +3044,12 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
           ${store.mode === 'local' || store.me.isOwner ? '<button type="button" class="af-link" id="ownerReset">أنا مالك النظام — إعادة تعيين كلمة مرور أي مستخدم</button>' : ''}
         </div>
         <div class="af-err" role="alert"></div>
-        <button class="af-submit" type="submit"><span>تسجيل الدخول</span></button>
+        <button class="af-submit go" type="submit"><span><i class="go-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></i>ادخل</span></button>
       </form>`;
     }
     box.innerHTML = `
       <div class="auth-wrap">
-        <section class="auth-brand">
+        <section class="auth-brand hero" aria-label="${esc(company)}">
           <div class="ab-shapes"><i></i><i></i><i></i></div>
           <div class="ab-inner">
             <div class="ab-logo">${esc(letter)}</div>
