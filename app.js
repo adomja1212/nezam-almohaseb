@@ -33,7 +33,8 @@
   const TABLES = ['appUsers', 'accounts', 'customers', 'suppliers', 'items', 'warehouses', 'departments', 'employees', 'attendance', 'payroll', 'leaves',
     'workers', 'dailyLabor', 'advances', 'cashboxes', 'receipts', 'payments', 'boxTransfers', 'journal', 'salesInvoices', 'salesQuotes', 'salesReturns',
     'purchaseOrders', 'purchaseInvoices', 'purchaseReturns', 'stockIn', 'stockOut', 'transfers', 'machines', 'machineOps', 'maintenanceOrders', 'maintenancePlan',
-    'units', 'costCenters', 'crops', 'girlsFixed', 'girlsTemp', 'bangladesh', 'branches', 'salesItems', 'supplierAccruals', 'openingBalances'];
+    'units', 'costCenters', 'crops', 'girlsFixed', 'girlsTemp', 'bangladesh', 'branches', 'salesItems', 'supplierAccruals', 'openingBalances',
+    'expenseOrders', 'supplierPayReqs', 'purchaseQuotes', 'fixedAssets'];
   const TX_TABLES = ['journal', 'openingBalances', 'receipts', 'payments', 'boxTransfers', 'supplierAccruals', 'salesInvoices', 'salesQuotes', 'salesReturns', 'purchaseOrders', 'purchaseInvoices', 'purchaseReturns',
     'stockIn', 'stockOut', 'transfers', 'attendance', 'payroll', 'leaves', 'dailyLabor', 'advances', 'machineOps', 'maintenanceOrders'];
   const APP_NAME = 'Sawah System';
@@ -436,6 +437,16 @@
   const advCats = () => childrenOf(SYS.otherDebit).filter(a => a.name.startsWith('سلف')).map(a => a.name);
   const advAcc = t => childrenOf(SYS.otherDebit).find(a => a.name === t)?.code || SYS.empAdvances;
   const custCats = () => childrenOf(SYS.customers).map(a => a.name);
+  // كل الحسابات الفرعية (النهائية) تحت حساب في الدليل
+  const leafUnder = code => leafAccounts().filter(a => a.code !== code && a.code.startsWith(code)).sort(codeSort);
+  const expAccOpts = () => leafAccounts().filter(a => a.code.startsWith(SYS.expenses)).map(accLabel);
+  // مجمع إهلاك الأصل حتى تاريخ (قسط ثابت شهري)
+  const assetDep = (r, to = today()) => {
+    const life = +r.life, base = (+r.cost || 0) - (+r.salvage || 0);
+    if (!life || !r.buyDate || base <= 0 || r.buyDate > to) return 0;
+    const months = (+to.slice(0, 4) - +r.buyDate.slice(0, 4)) * 12 + (+to.slice(5, 7) - +r.buyDate.slice(5, 7));
+    return Math.min(base, Math.max(0, months) * base / (life * 12));
+  };
   const suppCats = () => childrenOf(SYS.suppliers).map(a => a.name);
   const nature = code => isDebitNature(code) ? 'مدين' : 'دائن';
   const accType = code => ({ 1: 'أصول', 2: code[1] === '1' ? 'حقوق ملكية' : 'خصوم', 3: 'مصروفات', 4: 'إيرادات' }[code[0]] || '');
@@ -1267,6 +1278,46 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       validate: d => d.type === 'سلفة' && !d.advType ? 'اختر نوع السلفة' : '' },
 
     // ===== الميكنة =====
+    // ===== أوامر وطلبات الدفع (لا تُرحّل — تتحول إلى سند صرف بعد الاعتماد) =====
+    expenseOrders: { title: 'أوامر دفع المصروفات', prefix: 'EXP-', sub: 'طلب صرف مصروف على حساب ومركز تكلفة — بعد الاعتماد يتحول إلى سند صرف', single: 'أمر دفع مصروف', key: 'no', filter: 'status', cols: [
+      C('no', 'رقم الأمر', CODE), C('date', 'التاريخ', D), branchField(),
+      C('account', 'حساب المصروف', { input: 'select', options: expAccOpts, full: true, render: v => `<span class="hint">${esc(v || '')}</span>` }),
+      C('costCenter', 'مركز التكلفة', { input: 'select', optional: true, allowEmpty: '— بدون —', options: () => db.costCenters.map(c => c.name) }),
+      C('party', 'المستفيد', { optional: true }), C('amount', 'المبلغ', { ...M, total: true }),
+      C('desc', 'البيان', { full: true, optional: true }), C('status', 'الحالة', status('جديد', 'معتمد', 'مدفوع', 'مرفوض'))],
+      actions: [{ icon: 'pay', title: 'صرف — إنشاء سند صرف', target: 'payments', show: r => r.status === 'معتمد', write: true,
+        fn: r => openRecordForm('payments', null, { account: r.account, party: r.party || '', amount: r.amount, desc: `أمر دفع مصروف ${r.no}${r.desc ? ' — ' + r.desc : ''}`, branch: r.branch || '' },
+          () => { const x = db.expenseOrders.find(q => q.id === r.id); if (x) x.status = 'مدفوع'; }) }] },
+    supplierPayReqs: { title: 'طلبات دفع الموردين', prefix: 'SPR-', sub: 'طلب سداد لمورد (كامل الرصيد أو فاتورة محددة) — بعد الاعتماد يتحول إلى سند صرف', single: 'طلب دفع مورد', key: 'no', filter: 'status', cols: [
+      C('no', 'رقم الطلب', CODE), C('date', 'التاريخ', D),
+      C('supplier', 'المورد', { input: 'select', options: names('suppliers'), full: true }),
+      C('due', 'المستحق للمورد', computed(r => suppBal(r.supplier))),
+      C('invoice', 'سداد فاتورة', { input: 'select', optional: true, allowEmpty: '— بدون —', options: () => db.purchaseInvoices.map(i => [i.no, `${i.no} — ${i.supplier}`]) }),
+      C('amount', 'المبلغ المطلوب', { ...M, total: true }), C('payDate', 'تاريخ السداد المطلوب', { ...D, optional: true }),
+      C('desc', 'البيان', { full: true, optional: true }), C('status', 'الحالة', status('جديد', 'معتمد', 'مدفوع', 'مرفوض'))],
+      validate: d => { const inv = db.purchaseInvoices.find(i => i.no === d.invoice); if (inv && inv.supplier !== d.supplier) return `الفاتورة ${inv.no} تخص ${inv.supplier}`; },
+      actions: [{ icon: 'pay', title: 'صرف — إنشاء سند صرف', target: 'payments', show: r => r.status === 'معتمد', write: true,
+        fn: r => { const a = acc(suppAcc(r.supplier));
+          openRecordForm('payments', null, { account: a ? accLabel(a) : '', party: r.supplier, invoice: r.invoice || '', amount: r.amount, desc: `طلب دفع مورد ${r.no}${r.desc ? ' — ' + r.desc : ''}` },
+            () => { const x = db.supplierPayReqs.find(q => q.id === r.id); if (x) x.status = 'مدفوع'; }); } }] },
+    purchaseQuotes: { title: 'عروض أسعار الموردين', prefix: 'PQ-', sub: 'عروض الأسعار الواردة من الموردين — العرض المقبول يتحول إلى أمر توريد', single: 'عرض سعر', key: 'no', filter: 'status', cols: [
+      C('no', 'رقم العرض', CODE), C('date', 'التاريخ', D), C('supplier', 'المورد', { input: 'select', options: names('suppliers'), full: true }),
+      C('items', 'الأصناف / الخدمة', { full: true }), C('amount', 'القيمة', { ...M, total: true }), C('validUntil', 'صالح حتى', { ...D, optional: true }),
+      C('notes', 'ملاحظات', { optional: true, full: true, formOnly: true }), C('status', 'الحالة', status('جديد', 'مقبول', 'مرفوض'))],
+      actions: [{ icon: 'cart', title: 'تحويل إلى أمر توريد', target: 'purchaseOrders', show: r => r.status === 'مقبول', write: true,
+        fn: r => openRecordForm('purchaseOrders', null, { supplier: r.supplier, amount: r.amount, date: today() }) }] },
+    // ===== الأصول الثابتة: الإهلاك بطريقة القسط الثابت حتى اليوم =====
+    fixedAssets: { title: 'الأصول الثابتة', sub: 'سجل الأصول — الإهلاك بالقسط الثابت: (التكلفة − الخردة) ÷ العمر الإنتاجي، محسوب حتى اليوم', single: 'أصل ثابت', key: 'name', filter: 'category', cols: [
+      C('code', 'الكود', CODE), C('name', 'اسم الأصل', { full: true }),
+      C('category', 'النوع', { render: plain, suggest: () => [...new Set(['مباني', 'أراضي', 'آلات ومعدات', 'سيارات', 'أثاث ومفروشات', 'أجهزة كمبيوتر', 'آبار وشبكات ري', ...db.fixedAssets.map(a => a.category).filter(Boolean)])] }),
+      C('account', 'حساب الأصل', { input: 'select', optional: true, allowEmpty: '— اختر من الدليل —', options: () => leafAccounts().filter(a => a.code.startsWith('11')).map(accLabel), formOnly: true }),
+      C('branch', 'الفرع / الموقع', { input: 'select', optional: true, allowEmpty: '—', options: names('branches') }),
+      C('buyDate', 'تاريخ الشراء', D), C('cost', 'التكلفة', { ...M, total: true }),
+      C('life', 'العمر الإنتاجي (سنة)', { ...N, optional: true }), C('salvage', 'قيمة الخردة', { ...M, optional: true, formOnly: true }),
+      C('dep', 'مجمع الإهلاك', computed(r => assetDep(r), { total: true })),
+      C('book', 'القيمة الدفترية', computed(r => +r.cost - assetDep(r), { total: true })),
+      C('status', 'الحالة', status('قيد الاستخدام', 'متوقف', 'مستبعد'))],
+      defaults: () => ({ status: 'قيد الاستخدام', code: nextNo(db.fixedAssets, 'code') || 'FA-001' }) },
     machines: { title: 'المعدات والآلات', sub: 'الحالة تصبح "في الصيانة" تلقائياً عند وجود أمر صيانة مفتوح', single: 'معدة', key: 'name', filter: 'state', cols: [
       C('code', 'الكود', CODE), C('name', 'اسم المعدة', { full: true }), C('type', 'النوع'), C('serial', 'رقم الشاسيه / المسلسل', { cls: 'code' }),
       C('site', 'موقع العمل'), C('hourRate', 'تكلفة الساعة', M),
@@ -1361,41 +1412,59 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
     const r = REPORTS.find(x => x.id === id.slice(4));
     return r ? { title: r.title, sub: 'حدد الفترة ثم اطبع أو صدّر', render: () => renderReportCenter(r.id) } : null;
   };
-  const pageInfo = id => pages[id] || modules[id] || boxPageInfo(id) || whPageInfo(id) || repPageInfo(id);
+  // صفحة لكل حساب في الدليل (كشف حسابه)، وصفحة لكل تصنيف عملاء/موردين (قاعدة بياناته)
+  const acctPageInfo = id => {
+    const a = String(id).startsWith('acct/') && acc(id.slice(5));
+    return a ? { title: a.name, sub: `حساب ${a.code} — الحركات والرصيد`, render: () => { state.ledger = a.code; return renderLedger(); } } : null;
+  };
+  const catPageInfo = id => {
+    const m = String(id).match(/^(cust|supp)\/(.+)$/); if (!m) return null;
+    const t = m[1] === 'cust' ? 'customers' : 'suppliers', cat = m[2];
+    if (!(t === 'customers' ? custCats() : suppCats()).includes(cat)) return null;
+    return { title: cat, sub: `${t === 'customers' ? 'عملاء' : 'موردو'} تصنيف ${cat}`, render: () => { state.filter = cat; return renderModule(t); } };
+  };
+  const pageInfo = id => pages[id] || modules[id] || boxPageInfo(id) || whPageInfo(id) || acctPageInfo(id) || catPageInfo(id) || repPageInfo(id);
 
   // ---------- القائمة الجانبية ----------
   const nav = [
-    { title: 'دليل الحسابات', icon: 'list', items: ['accounts', 'openingBalances', 'journal', 'ledger', 'reports'] },
-    { title: 'الإدارات', icon: 'box', items: [
-      { title: 'الخزينة', icon: 'cash', items: () => [...db.cashboxes.filter(b => !isBankBox(b)).sort((a, b) => String(a.code).localeCompare(String(b.code))).map(b => 'box/' + b.id), 'receipts', 'payments', 'boxTransfers'] },
-      { title: 'البنوك', icon: 'bank', items: () => [...db.cashboxes.filter(isBankBox).sort((a, b) => String(a.code).localeCompare(String(b.code))).map(b => 'box/' + b.id), 'bankMoves', 'cashboxes'] },
-      { title: 'المبيعات', icon: 'sales', items: [...SALE_TYPES.map(([k]) => 'si_' + k), ...SALE_TYPES.map(([k]) => 'sr_' + k), 'salesInvoices', 'salesReturns', 'salesQuotes'] },
-      { title: 'إدارة الموردين', icon: 'users', items: ['supplierAccruals', 'suppliers'] },
-      { title: 'المشتريات', icon: 'cart', items: ['purchaseOrders', 'purchaseInvoices', 'purchaseReturns'] },
-      { title: 'المخازن', icon: 'box', items: () => [...db.warehouses.slice().sort((a, b) => String(a.code).localeCompare(String(b.code))).map(w => 'wh/' + w.id), 'stockBalances', 'stockIn', 'stockOut', 'transfers'] },
-      { title: 'شئون العاملين', icon: 'users', items: ['attendance', 'payroll', 'leaves'] },
-      { title: 'شئون العمالة', icon: 'hardhat', items: ['dailyLabor', 'advances'] },
-      { title: 'الميكنة', icon: 'truck', items: ['machineOps'] },
-      { title: 'الصيانة', icon: 'wrench', items: ['maintenanceOrders', 'maintenancePlan'] },
-    ] },
-    // تُبنى عند العرض (قائمة التقارير معرّفة لاحقاً في الملف)
-    { title: 'التقارير', icon: 'trend', items: () => { try { return ['reportCenter',
-      { title: 'القوائم المالية', icon: 'ledger', items: [...Object.keys(STATEMENTS).map(k => 'st/' + k), 'reports'] },
-      ...[...new Set(REPORTS.map(r => r.group))].map(g => ({ title: g, icon: 'list', items: REPORTS.filter(r => r.group === g).map(r => 'rep/' + r.id) }))]; } catch { return ['reportCenter', 'reports']; } } },
+    { title: 'دليل الحسابات', icon: 'list', items: ['accounts', 'openingBalances', 'journal', 'ledger',
+      { title: 'التقارير المالية', icon: 'ledger', items: () => { try { return [...Object.keys(STATEMENTS).map(k => 'st/' + k), 'reports', ...REPORTS.filter(r => r.group === 'التقارير المالية').map(r => 'rep/' + r.id), 'rep/tb', 'rep/daybook']; } catch { return ['reports']; } } }] },
+    { title: 'إدارة الخزينة والبنوك', icon: 'cash', items: [
+      { title: 'الخزائن', icon: 'cash', items: () => [...db.cashboxes.filter(b => !isBankBox(b)).sort((a, b) => String(a.code).localeCompare(String(b.code))).map(b => 'box/' + b.id), 'receipts', 'payments', 'boxTransfers'] },
+      { title: 'البنوك', icon: 'bank', items: () => [...db.cashboxes.filter(isBankBox).sort((a, b) => String(a.code).localeCompare(String(b.code))).map(b => 'box/' + b.id), 'bankMoves', 'rep/chqCollect', 'rep/chqDue'] },
+      'cashboxes'] },
+    { title: 'إدارة الحسابات', icon: 'ledger', items: [
+      { title: 'الموردين', icon: 'truck', items: () => [...leafUnder(SYS.suppliers).map(a => 'acct/' + a.code), 'supplierAccruals', 'rep/apaging', 'rep/suppAccr', 'rep/purSupp', 'rep/purCat'] },
+      { title: 'العملاء', icon: 'users', items: () => [...leafUnder(SYS.customers).map(a => 'acct/' + a.code), 'rep/araging', 'rep/salesCust', 'rep/salesCat', 'rep/partybal'] },
+      'expenseOrders', 'supplierPayReqs',
+      { title: 'التقارير المحاسبية', icon: 'trend', items: ['rep/treasuryDaily', 'rep/cashflow', 'bankMoves', 'stockBalances', 'rep/stkValue', 'rep/payrollRep', 'rep/apaging', 'rep/araging', 'rep/expgroups', 'rep/payParties', 'rep/monthly'] }] },
+    { title: 'إدارة التكاليف', icon: 'trend', items: ['rep/costRep', 'costCenters', 'crops', 'stockOut'] },
+    { title: 'إدارة شئون العاملين', icon: 'users', items: ['attendance', 'payroll', 'leaves', 'rep/payrollRep', 'rep/attRep', 'rep/deptRep'] },
+    { title: 'إدارة شئون العمالة', icon: 'hardhat', items: ['dailyLabor', 'advances', 'rep/laborRep'] },
+    { title: 'إدارة المشتريات', icon: 'cart', items: ['purchaseQuotes', 'purchaseOrders', 'purchaseInvoices', 'purchaseReturns', 'rep/purRep'] },
+    { title: 'إدارة المبيعات', icon: 'sales', items: ['salesQuotes',
+      { title: 'فواتير المبيعات', icon: 'sales', items: [...SALE_TYPES.map(([k]) => 'si_' + k), 'salesInvoices'] },
+      { title: 'المردودات', icon: 'sales', items: [...SALE_TYPES.map(([k]) => 'sr_' + k), 'salesReturns'] },
+      { title: 'تقارير المبيعات', icon: 'trend', items: ['rep/salesRep', 'rep/salesCust', 'rep/salesCat', 'rep/salesMonth'] }] },
+    { title: 'إدارة المخازن', icon: 'box', items: () => [...db.warehouses.slice().sort((a, b) => String(a.code).localeCompare(String(b.code))).map(w => 'wh/' + w.id), 'stockBalances', 'stockIn', 'stockOut', 'transfers', 'rep/stkMove', 'rep/stkLow', 'rep/stkValue'] },
+    { title: 'إدارة الميكنة', icon: 'truck', items: ['machineOps', 'machines', 'rep/machRep'] },
+    { title: 'إدارة الصيانة', icon: 'wrench', items: ['maintenanceOrders', 'maintenancePlan', 'rep/maintPlanRep'] },
+    { title: 'إدارة الأصول الثابتة', icon: 'shield', items: ['fixedAssets', 'rep/assetRep'] },
     { title: 'قواعد البيانات', icon: 'db', items: [
-      { title: 'العملاء والموردون', icon: 'users', items: ['customers', 'suppliers'] },
+      { title: 'قاعدة بيانات الموردين', icon: 'truck', items: () => ['suppliers', ...suppCats().map(c => 'supp/' + c)] },
+      { title: 'قاعدة بيانات العملاء', icon: 'users', items: () => ['customers', ...custCats().map(c => 'cust/' + c)] },
+      { title: 'قاعدة بيانات الموظفين', icon: 'users', items: ['employees', 'girlsFixed', 'girlsTemp', 'bangladesh', 'workers', 'departments'] },
+      { title: 'قاعدة بيانات الأصول الثابتة', icon: 'shield', items: ['fixedAssets', 'machines'] },
       { title: 'الأصناف والمخازن', icon: 'box', items: ['salesItems', 'items', 'units', 'warehouses'] },
-      { title: 'العاملون', icon: 'users', items: ['employees', 'girlsFixed', 'girlsTemp', 'bangladesh', 'workers', 'departments'] },
-      { title: 'الفروع ومراكز التكلفة', icon: 'list', items: ['branches', 'costCenters', 'crops'] },
-      'machines'] },
-    { title: 'الإدارة والإعدادات', icon: 'shield', items: ['dashboard', 'approvals', 'users', 'import', 'database', 'settings'] },
+      { title: 'الفروع ومراكز التكلفة', icon: 'list', items: ['branches', 'costCenters', 'crops'] }] },
+    { title: 'الإدارة والإعدادات', icon: 'shield', items: ['dashboard', 'reportCenter', 'approvals', 'users', 'import', 'database', 'settings'] },
   ];
   const EMO = {
     dashboard: '📊', reportCenter: '🗂️', approvals: '✅', users: '👥', database: '🗄️', settings: '⚙️', accounts: '🌳', journal: '📒', ledger: '📄', reports: '📈',
     cashboxes: '🗃️', bankMoves: '🧾', receipts: '📥', payments: '📤', boxTransfers: '🔄', import: '📥', salesInvoices: '🧾', salesQuotes: '💬', salesReturns: '↩️', si_local: '🏪', si_seedlings: '🌱', si_scrap: '♻️', si_livestock: '🐄', sr_local: '↩️', sr_seedlings: '↩️', sr_scrap: '↩️', sr_livestock: '↩️',
     purchaseOrders: '📝', purchaseInvoices: '🧾', purchaseReturns: '↪️', stockBalances: '📦', stockIn: '➕', stockOut: '➖', transfers: '🔁',
     attendance: '🕘', payroll: '💰', leaves: '🌴', dailyLabor: '👷', advances: '💵', machineOps: '⛽', maintenanceOrders: '🔧', maintenancePlan: '🗓️',
-    customers: '🤝', suppliers: '🚚', items: '🏷️', warehouses: '🏬', employees: '👔', units: '⚖️', salesItems: '🧺', supplierAccruals: '🗓️', openingBalances: '🧮', branches: '📍', costCenters: '🎯', crops: '🌱', girlsFixed: '👩‍🌾', girlsTemp: '👩', bangladesh: '🧑‍🔧', workers: '🦺', departments: '🏢', machines: '🚜',
+    expenseOrders: '🧾', supplierPayReqs: '📨', purchaseQuotes: '💬', fixedAssets: '🏗️', customers: '🤝', suppliers: '🚚', items: '🏷️', warehouses: '🏬', employees: '👔', units: '⚖️', salesItems: '🧺', supplierAccruals: '🗓️', openingBalances: '🧮', branches: '📍', costCenters: '🎯', crops: '🌱', girlsFixed: '👩‍🌾', girlsTemp: '👩', bangladesh: '🧑‍🔧', workers: '🦺', departments: '🏢', machines: '🚜',
   };
   // مسار كل صفحة داخل القائمة (لفتح المجموعات التي تحتويها)
   let pagePath = {};
@@ -1420,14 +1489,14 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
   };
   const badge = n => n ? `<em class="badge">${n}</em>` : '';
 
-  const state = { page: null, open: new Set(['4']), navTab: 'all', navQ: '', q: '', filter: '', collapsed: new Set(), ledger: '1211' };
+  const state = { page: null, open: new Set(['0']), navTab: 'all', navQ: '', q: '', filter: '', collapsed: new Set(), ledger: '1211' };
   let pendingQuery = null;
 
   function leafHTML(p, withPath) {
     if (!can(p)) return '';
     const fav = prefs.fav.includes(p), info = pageInfo(p);
     return `<div class="nav-leaf ${state.page === p ? 'active' : ''}">
-      <a href="#${p}" data-page="${p}"><span class="emo">${EMO[p] || (p.startsWith('rep/') ? '📑' : p.startsWith('st/') ? '📈' : p.startsWith('wh/') ? '🏬' : p.startsWith('box/') ? (isBankBox(db.cashboxes.find(b => 'box/' + b.id === p)) ? '🏦' : '💵') : '•')}</span><span class="nav-title">${info.title}${withPath ? `<small>${pagePath[p].titles.join(' › ')}</small>` : ''}</span>${badge(badges[p]?.() || 0)}</a>
+      <a href="#${p}" data-page="${p}"><span class="emo">${EMO[p] || (p.startsWith('rep/') ? '📑' : p.startsWith('st/') ? '📈' : p.startsWith('wh/') ? '🏬' : p.startsWith('box/') ? (isBankBox(db.cashboxes.find(b => 'box/' + b.id === p)) ? '🏦' : '💵') : p.startsWith('acct/') ? '📒' : p.startsWith('cust/') ? '🤝' : p.startsWith('supp/') ? '🚚' : '•')}</span><span class="nav-title">${info.title}${withPath ? `<small>${pagePath[p].titles.join(' › ')}</small>` : ''}</span>${badge(badges[p]?.() || 0)}</a>
       <button class="star ${fav ? 'on' : ''}" data-fav="${p}" title="${fav ? 'إزالة من المفضلة' : 'إضافة إلى المفضلة'}" aria-pressed="${fav}">${fav ? '★' : '☆'}</button></div>`;
   }
   function groupHTML(g, key, lvl) {
@@ -2861,11 +2930,11 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
   const VIEW_ONLY = ['dashboard', 'ledger', 'reports', 'stockBalances', 'database'];
   const SPECIAL_PAGES = { users: 'users', import: 'import', approvals: 'approvalsSetup', reportCenter: '_all' };
   const actsOf = p => SPECIAL_PAGES[p] ? [] : VIEW_ONLY.includes(p) ? ['v'] : p === 'settings' ? ['v', 'e'] : ['v', 'a', 'e', 'd'];
-  const permPages = () => [...Object.keys(pagePath).filter(p => !SPECIAL_PAGES[p] && p !== 'bankMoves' && !/^(box|wh|rep|st)\//.test(p))];
+  const permPages = () => [...Object.keys(pagePath).filter(p => !SPECIAL_PAGES[p] && p !== 'bankMoves' && !/^(box|wh|rep|st|acct|cust|supp)\//.test(p))];
   const grant = (list, acts) => Object.fromEntries(list.map(p => [p, actsOf(p).filter(a => acts.includes(a)).join('')]));
   const ROLES = {
     admin: { title: 'مدير النظام', build: () => ({ perms: grant(permPages(), 'vaed'), special: SPECIALS.map(s => s[0]) }) },
-    accountant: { title: 'محاسب', build: () => ({ perms: { ...grant(permPages(), 'v'), ...grant(['accounts', 'journal', 'cashboxes', 'receipts', 'payments', 'supplierAccruals', 'salesInvoices', 'salesReturns', 'purchaseInvoices', 'purchaseReturns', 'payroll', 'customers', 'suppliers'], 'vae') }, special: ['export'] }) },
+    accountant: { title: 'محاسب', build: () => ({ perms: { ...grant(permPages(), 'v'), ...grant(['accounts', 'journal', 'cashboxes', 'receipts', 'payments', 'expenseOrders', 'supplierPayReqs', 'fixedAssets', 'supplierAccruals', 'salesInvoices', 'salesReturns', 'purchaseInvoices', 'purchaseReturns', 'payroll', 'customers', 'suppliers'], 'vae') }, special: ['export'] }) },
     storekeeper: { title: 'أمين مخزن', build: () => ({ perms: { ...grant(['dashboard', 'suppliers', 'purchaseOrders'], 'v'), ...grant(['items', 'units', 'warehouses', 'stockBalances', 'stockIn', 'stockOut', 'transfers'], 'vae'), ...grant(['branches', 'costCenters'], 'v') }, special: ['export'] }) },
     sales: { title: 'مندوب مبيعات', build: () => ({ perms: { ...grant(['dashboard', 'items', 'stockBalances'], 'v'), ...grant(['customers', 'salesItems', 'salesInvoices', 'salesQuotes', 'salesReturns', 'receipts'], 'vae') }, special: [] }) },
     hr: { title: 'شئون العاملين', build: () => ({ perms: { ...grant(['dashboard'], 'v'), ...grant(['employees', 'girlsFixed', 'girlsTemp', 'bangladesh', 'costCenters', 'attendance', 'payroll', 'leaves', 'departments', 'workers', 'dailyLabor', 'advances'], 'vae') }, special: ['export'] }) },
@@ -2887,6 +2956,9 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
     if (String(page).startsWith('st/')) return String(u.perms?.reports || '').includes(act);
     if (String(page).startsWith('rep/')) { const r = REPORTS.find(x => x.id === page.slice(4)); return !!r && act === 'v' && can(r.need); }
     if (String(page).startsWith('wh/')) return act === 'v' && ['stockIn', 'stockOut', 'transfers', 'stockBalances', 'items'].some(x => String(u.perms?.[x] || '').includes('v'));
+    if (String(page).startsWith('acct/')) return act === 'v' && can('ledger');
+    if (String(page).startsWith('cust/')) return can('customers', act);
+    if (String(page).startsWith('supp/')) return can('suppliers', act);
     if (page === 'bankMoves' || String(page).startsWith('box/')) return act === 'v' && ['receipts', 'payments', 'boxTransfers', 'cashboxes'].some(x => String(u.perms?.[x] || '').includes('v'));
     if (page === 'approvals') return isApprover(u) || (u.special || []).includes('approvalsSetup');
     if (SPECIAL_PAGES[page]) return (u.special || []).includes(SPECIAL_PAGES[page]);
@@ -4352,6 +4424,23 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
     { id: 'deptRep', group: 'شئون العاملين', title: 'الموظفون والرواتب حسب الإدارة', need: 'employees', noDate: true, run: () => ({
       cols: [col('الإدارة'), col('عدد الموظفين', N$), col('إجمالي الرواتب الأساسية', M$)],
       rows: db.departments.map(d => { const e = db.employees.filter(x => x.department === d.name); return [d.name, e.length, sum(e, x => x.salary)]; }) }) },
+    // ===== إدارة التكاليف =====
+    { id: 'costRep', group: 'إدارة التكاليف', title: 'التكاليف حسب مركز التكلفة', need: 'costCenters', run: (f, t) => {
+      const inP = d => inRange(d, f, t), mIn = m => m && inRange(m + '-15', f, t);
+      const staffCC = n => staffOf(n)?.costCenter || '';
+      const issue = cc => sum(stockRows('stockOut').filter(l => l.doc.costCenter === cc && inP(l.doc.date)), l => baseQty(l) * (+db.items.find(i => i.name === l.item)?.cost || 0));
+      const sal = cc => sum(eff('payroll').filter(r => mIn(r.month) && staffCC(r.employee) === cc), r => +r.basic + +r.allowances - +r.deductions);
+      const lab = cc => sum(eff('dailyLabor').filter(r => inP(r.date) && staffCC(r.worker) === cc), r => r.days * r.wage);
+      const exp = cc => sum(db.expenseOrders.filter(r => r.costCenter === cc && inP(r.date) && ['معتمد', 'مدفوع'].includes(r.status)), r => r.amount);
+      const rows = db.costCenters.map(c => { const v = [sal(c.name), lab(c.name), issue(c.name), exp(c.name)]; const tot = v.reduce((a, b) => a + b, 0);
+        return [c.branch || '', c.name, +c.area || 0, ...v, tot, +c.area ? tot / +c.area : 0]; }).filter(r => r[7]);
+      return { cols: [col('الفرع'), col('مركز التكلفة'), col('المساحة', N$), col('الرواتب', M$), col('أجور العمالة', M$), col('صرف مخزني', M$), col('مصروفات (أوامر دفع)', M$), col('إجمالي التكلفة', M$), col('التكلفة لكل وحدة مساحة', M$, { noSum: true })], rows };
+    } },
+    // ===== الأصول الثابتة =====
+    { id: 'assetRep', group: 'الأصول الثابتة', title: 'سجل الأصول الثابتة والإهلاك', need: 'fixedAssets', run: (f, t) => ({
+      cols: [col('الكود'), col('الأصل'), col('النوع'), col('الفرع'), col('تاريخ الشراء'), col('التكلفة', M$), col('إهلاك الفترة', M$), col('مجمع الإهلاك في نهاية الفترة', M$), col('القيمة الدفترية', M$), col('الحالة')],
+      rows: db.fixedAssets.filter(a => !a.buyDate || a.buyDate <= (t || today())).map(a => { const end = assetDep(a, t || today()), start = f ? assetDep(a, f) : 0;
+        return [a.code, a.name, a.category, a.branch || '', a.buyDate, +a.cost, end - start, end, +a.cost - end, a.status]; }) }) },
     // ===== شئون العمالة =====
     { id: 'laborRep', group: 'شئون العمالة', title: 'أجور وسلف العمال', need: 'dailyLabor', run: (f, t) => {
       const lab = eff('dailyLabor').filter(r => inRange(r.date, f, t)), adv = eff('advances').filter(r => inRange(r.date, f, t));
@@ -4738,7 +4827,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
   const tabs = { list: [], view: {} };
   try { const t = JSON.parse(localStorage.getItem(TABS_KEY)); if (Array.isArray(t?.list)) tabs.list = t.list.filter(x => typeof x === 'string').slice(0, MAX_TABS); } catch {}
   const saveTabs = () => { try { localStorage.setItem(TABS_KEY, JSON.stringify({ list: tabs.list })); } catch {} };
-  const tabIcon = p => EMO[p] || (p.startsWith('rep/') ? '📑' : p.startsWith('st/') ? '📈' : p.startsWith('wh/') ? '🏬' : p.startsWith('box/') ? (isBankBox(db.cashboxes.find(b => 'box/' + b.id === p)) ? '🏦' : '💵') : '📄');
+  const tabIcon = p => EMO[p] || (p.startsWith('rep/') ? '📑' : p.startsWith('st/') ? '📈' : p.startsWith('wh/') ? '🏬' : p.startsWith('box/') ? (isBankBox(db.cashboxes.find(b => 'box/' + b.id === p)) ? '🏦' : '💵') : p.startsWith('acct/') ? '📒' : p.startsWith('cust/') ? '🤝' : p.startsWith('supp/') ? '🚚' : '📄');
   function renderTabs() {
     const bar = $('#tabBar'); if (!bar) return;
     tabs.list = tabs.list.filter(p => pageInfo(p) && can(p));
