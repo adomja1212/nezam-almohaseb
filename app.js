@@ -437,6 +437,10 @@
   const advCats = () => childrenOf(SYS.otherDebit).filter(a => a.name.startsWith('سلف')).map(a => a.name);
   const advAcc = t => childrenOf(SYS.otherDebit).find(a => a.name === t)?.code || SYS.empAdvances;
   const custCats = () => childrenOf(SYS.customers).map(a => a.name);
+  // خيارات "الحساب الرئيسي": حسابات المستوى الرابع تحت الحساب الأب، تُعرض بالكود والاسم
+  const mainAccOpts = root => () => childrenOf(root).map(a => [a.name, accLabel(a)]);
+  // فئات المرتبات المستحقة (حسابات المستوى الرابع تحت المرتبات المستحقة) — القيمة اسم الفئة بدون "المستحقة"
+  const payGroupOpts = () => childrenOf(SYS.accruedSal).filter(a => /مرتبات/.test(a.name)).map(a => [a.name.replace(SUFFIX, ''), accLabel(a)]);
   // كل الحسابات الفرعية (النهائية) تحت حساب في الدليل
   const leafUnder = code => leafAccounts().filter(a => a.code !== code && a.code.startsWith(code)).sort(codeSort);
   const expAccOpts = () => leafAccounts().filter(a => a.code.startsWith(SYS.expenses)).map(accLabel);
@@ -681,7 +685,7 @@
   const baseQty = r => { const u = db.items.find(i => i.name === r.item)?.unit; const q = convertQty(r.qty, r.unit || u, u); return isNaN(q) ? +r.qty || 0 : q; };
   // فئات العاملين: كل قاعدة بيانات مرتبطة بفئة مرتبات (التزام + مصروف) في شجرة الحسابات
   const STAFF = { employees: 'مرتبات العاملين', girlsFixed: 'مرتبات البنات الثابتة', girlsTemp: 'مرتبات البنات المؤقتة', bangladesh: 'مرتبات بنجلاديش' };
-  const allStaff = () => memo('staff', () => Object.entries(STAFF).flatMap(([t, g]) => db[t].map(r => ({ ...r, _t: t, group: t === 'employees' && r.payGroup ? r.payGroup : g }))));
+  const allStaff = () => memo('staff', () => Object.entries(STAFF).flatMap(([t, g]) => db[t].map(r => ({ ...r, _t: t, group: r.payGroup || g }))));
   const staffOf = n => allStaff().find(x => x.name === n);
   const staffNames = () => allStaff().map(x => x.name);
   const opt = (...o) => () => o;
@@ -824,12 +828,13 @@
   const qtyNote = r => r.unit && r.unit !== itemUnit(r.item) ? ` (${num(r.qty)} ${r.unit})` : '';
   const invAccOpts = () => leafAccounts().filter(a => isInvAcc(a.code)).map(a => [a.code, a.name]);
   const staffCols = (nameLbl, idLbl) => [
-    C('code', 'الكود', CODE), C('name', nameLbl, { full: true }), C('nationalId', idLbl, { optional: true, cls: 'code' }), C('phone', 'الهاتف', { optional: true }),
+    C('code', 'الكود', CODE), C('name', nameLbl, { full: true }),
+    C('payGroup', 'الحساب الرئيسي (المرتبات المستحقة)', { input: 'select', optional: true, allowEmpty: '— حسب قاعدة البيانات —', options: payGroupOpts, full: true, render: v => v ? `<span class="pill">${esc(v)}</span>` : '—' }), C('nationalId', idLbl, { optional: true, cls: 'code' }), C('phone', 'الهاتف', { optional: true }),
     C('job', 'الوظيفة / العمل', { optional: true }), C('costCenter', 'مركز التكلفة', { input: 'select', optional: true, allowEmpty: '— بدون —', options: () => db.costCenters.map(c => [c.name, `${c.name} — ${c.branch || ''}`]) }),
     C('hireDate', 'تاريخ الالتحاق', D), C('salary', 'الراتب / الأجر', { ...M, total: true }),
     C('costType', 'نوع التكلفة', { render: plain, input: 'select', options: () => COST_TYPES }), C('status', 'الحالة', status('نشط', 'موقوف'))];
   const staffDb = (t, title, single, nameLbl, idLbl, ct) => ({ title, sub: `مرتباتهم تُرحّل على فئة "${STAFF[t]}" — حسب نوع التكلفة (تشغيلية / تسويقية / إدارية)`, single, key: 'name', filter: 'status',
-    defaults: () => ({ costType: ct, status: 'نشط' }), cols: staffCols(nameLbl, idLbl), validate: (d, rec) => allStaff().some(x => x.name === d.name && !(x._t === t && x.id === rec?.id)) ? `"${d.name}" مسجل في قاعدة عاملين أخرى` : '' });
+    defaults: () => ({ costType: ct, status: 'نشط', payGroup: STAFF[t] }), cols: staffCols(nameLbl, idLbl), validate: (d, rec) => allStaff().some(x => x.name === d.name && !(x._t === t && x.id === rec?.id)) ? `"${d.name}" مسجل في قاعدة عاملين أخرى` : '' });
 
   // رصيد أول المدة بخانتين: مدين أو دائن (وليس الاثنين)
   const openPair = d => { d.openDr = +d.openDr || 0; d.openCr = +d.openCr || 0; d.opening = 0;
@@ -839,7 +844,7 @@
     // ===== البيانات الأساسية =====
     customers: { title: 'العملاء', sub: 'كل تصنيف له حساب مستقل في شجرة الحسابات تحت حـ/ العملاء', single: 'عميل', key: 'name', filter: 'category', cols: [
       C('code', 'الكود', CODE), C('name', 'اسم العميل', { full: true }),
-      C('category', 'التصنيف', { render: plain, input: 'select', options: custCats }),
+      C('category', 'الحساب الرئيسي', { render: plain, input: 'select', options: mainAccOpts(SYS.customers), aka: ['التصنيف'] }),
       C('phone', 'الهاتف', { input: 'tel' }), C('city', 'المدينة'),
       C('limit', 'حد الائتمان', M), C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, formOnly: true, aka: ['رصيد أول المدة'] }),
       C('openCr', 'رصيد أول المدة — دائن', { ...M, optional: true, formOnly: true }),
@@ -849,7 +854,7 @@
       validate: d => openPair(d) },
     suppliers: { title: 'الموردون', sub: 'كل تصنيف له حساب مستقل في شجرة الحسابات تحت حـ/ الموردين', single: 'مورد', key: 'name', filter: 'category', cols: [
       C('code', 'الكود', CODE), C('name', 'اسم المورد', { full: true }), C('phone', 'الهاتف', { input: 'tel' }), C('city', 'المدينة'),
-      C('category', 'التصنيف', { render: plain, input: 'select', options: suppCats }),
+      C('category', 'الحساب الرئيسي', { render: plain, input: 'select', options: mainAccOpts(SYS.suppliers), aka: ['التصنيف'] }),
 C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, formOnly: true }),
       C('openCr', 'رصيد أول المدة — دائن', { ...M, optional: true, formOnly: true, aka: ['رصيد أول المدة'] }),
       C('balance', 'المستحق للمورد', computed(r => suppBal(r.name), { total: true }))],
@@ -975,7 +980,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       C('no', 'رقم الحركة', CODE), C('date', 'تاريخ الحركة', D), boxField(), branchField(),
       C('account', 'اسم الحساب', { input: 'select', optional: true, allowEmpty: '— اختر الحساب —', options: treasAccOpts, full: true, render: (v, r) => `<span class="hint">${esc(v || (isSupplier(r.party) ? accLabel(acc(suppAcc(r.party)) || { code: '', name: '' }) : '—'))}</span>` }),
       C('party', 'اسم المستفيد', { optional: true, full: true, dyn: true, suggest: v => partyOpts(v?.account), render: (v, r) => esc(partyName(r)) }),
-      C('invoice', 'سداد فاتورة', { input: 'select', optional: true, allowEmpty: '— بدون —', formOnly: true, options: () => db.purchaseInvoices.map(i => [i.no, `${i.no} — ${i.supplier}`]), when: f => partyKind(accCode(f.account)) === 's' }),
+      C('invoice', 'سداد فاتورة', { input: 'select', optional: true, allowEmpty: '— بدون —', formOnly: true, dep: ['party', 'account'], options: v => db.purchaseInvoices.filter(i => !v?.party || i.supplier === v.party).map(i => [i.no, `${i.no} — ${i.supplier}`]), when: f => partyKind(accCode(f.account)) === 's' }),
       C('amount', 'المبلغ', { ...M, total: true }), ...bankFields(bankSide('box'), '', CHQ_OUT, false), C('desc', 'البيان', { full: true, optional: true })],
       defaults: () => ({ method: 'نقدي' }),
       validate: (d, rec) => {
@@ -1200,7 +1205,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       C('account', 'اسم الحساب', { input: 'select', optional: true, allowEmpty: '— حساب مخزون كل صنف —', options: () => leafAccounts().filter(a => isInvAcc(a.code)).map(accLabel), render: v => `<span class="hint">${v ? esc(v) : 'حسب الصنف'}</span>` }),
       C('supplier', 'المورد', { input: 'select', optional: true, allowEmpty: '— بدون مورد —', options: names('suppliers'), render: (v, r) => esc(v || r.source || '—') }),
       C('branch', 'الفرع', { input: 'select', optional: true, allowEmpty: '—', options: names('branches') }),
-      C('lines', 'الأصناف', { input: 'lines', formOnly: true, full: true, tax: true }),
+      C('lines', 'الأصناف', { input: 'lines', formOnly: true, full: true, tax: true, pickOn: ['account'], pick: v => v.account ? i => !i.store || i.store === accCode(v.account) : null }),
       C('itemsSum', 'الأصناف', { compute: linesSummary, render: (v, r) => `${esc(v)} <span class="hint">(${docTotals(r).n})</span>` }),
       C('sub', 'القيمة', computed(r => docTotals(r).sub, { total: true })), C('vat', 'ض.ق.م', computed(r => docTotals(r).vat, { total: true })),
       C('wht', 'ض. خصم وإضافة', computed(r => docTotals(r).wht, { total: true })), C('net', 'صافي الفاتورة', computed(r => docTotals(r).net, { total: true, render: v => `<b>${money(v)}</b>` })),
@@ -1211,7 +1216,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       C('account', 'اسم الحساب', { input: 'select', optional: true, allowEmpty: '— اختر الحساب المدين —', options: () => leafAccounts().filter(a => !isTreasury(a.code) && !isInvAcc(a.code) && /^[123]/.test(a.code)).map(accLabel), render: v => `<span class="hint">${esc(v || '—')}</span>` }),
       C('costCenter', 'جهة الصرف (مركز التكلفة)', { input: 'select', optional: true, allowEmpty: '— اختر مركز التكلفة —', options: () => db.costCenters.map(c => [c.name, `${c.name}${c.sector ? ' — ' + c.sector : ''}`]), render: (v, r) => esc(v || r.to || '—') }),
       C('branch', 'الفرع التابع له', { input: 'select', optional: true, allowEmpty: '—', options: names('branches') }),
-      C('lines', 'الأصناف', { input: 'lines', formOnly: true, full: true }),
+      C('lines', 'الأصناف', { input: 'lines', formOnly: true, full: true, pickOn: ['warehouse'], pick: v => v.warehouse ? i => stockAt(i.name, v.warehouse) > 0 : null }),
       C('itemsSum', 'الأصناف', { compute: linesSummary, render: (v, r) => `${esc(v)} <span class="hint">(${docTotals(r).n})</span>` }),
       C('net', 'القيمة بالتكلفة', computed(r => docTotals(r).sub, { total: true, render: v => `<b>${money(v)}</b>` })),
       C('notes', 'البيان', { optional: true, full: true, formOnly: true })],
@@ -1219,7 +1224,8 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       validate: (d, rec) => stockDocCheck(d, rec, 'out') },
     transfers: { title: 'التحويلات المخزنية', sub: 'نقل رصيد بين المخازن', single: 'تحويل', key: 'no', cols: [
       C('no', 'رقم التحويل', CODE), C('date', 'التاريخ', D), C('from', 'من مخزن', { input: 'select', options: names('warehouses') }),
-      C('to', 'إلى مخزن', { input: 'select', options: names('warehouses') }), C('item', 'الصنف', { input: 'select', options: names('items') }), C('qty', 'الكمية', N), C('unit', 'الوحدة', { input: 'select', optional: true, allowEmpty: '— وحدة الصنف —', options: () => db.units.map(u => u.name) }), C('baseQty', 'بوحدة الصنف', { cls: 'num', compute: r => r.unit && r.unit !== itemUnit(r.item) ? baseQty(r) : '', render: (v, r) => v === '' ? '' : `${num(v)} ${esc(itemUnit(r.item))}` })],
+      C('to', 'إلى مخزن', { input: 'select', dep: ['from'], options: v => db.warehouses.map(w => w.name).filter(n => n !== v?.from) }),
+      C('item', 'الصنف', { input: 'select', dep: ['from'], options: v => db.items.filter(i => !v?.from || stockAt(i.name, v.from) > 0).map(i => [i.name, `${i.name} — رصيد ${num(stockAt(i.name, v?.from || ''))}`]) }), C('qty', 'الكمية', N), C('unit', 'الوحدة', { input: 'select', optional: true, allowEmpty: '— وحدة الصنف —', options: () => db.units.map(u => u.name) }), C('baseQty', 'بوحدة الصنف', { cls: 'num', compute: r => r.unit && r.unit !== itemUnit(r.item) ? baseQty(r) : '', render: (v, r) => v === '' ? '' : `${num(v)} ${esc(itemUnit(r.item))}` })],
       onSelect: { item: unitPick },
       validate: (d, rec) => {
         if (d.from === d.to) return 'لا يمكن التحويل لنفس المخزن';
@@ -1230,7 +1236,9 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
 
     // ===== شئون العاملين =====
     employees: { title: 'العاملين', sub: 'مرتباتهم تُرحّل على فئة "مرتبات العاملين" — حسب نوع التكلفة (تشغيلية / تسويقية / إدارية)', single: 'موظف', key: 'name', filter: 'department', defaults: () => ({ costType: 'إدارية' }), cols: [
-      C('code', 'الكود', CODE), C('name', 'اسم الموظف', { full: true }), C('department', 'الإدارة', { input: 'select', options: names('departments') }),
+      C('code', 'الكود', CODE), C('name', 'اسم الموظف', { full: true }),
+      C('payGroup', 'الحساب الرئيسي (المرتبات المستحقة)', { input: 'select', optional: true, allowEmpty: '— مرتبات العاملين —', options: payGroupOpts, full: true, render: v => v ? `<span class="pill">${esc(v)}</span>` : '—' }),
+      C('department', 'الإدارة', { input: 'select', options: names('departments') }),
       C('job', 'الوظيفة'), C('costCenter', 'مركز التكلفة', { input: 'select', optional: true, allowEmpty: '— بدون —', options: () => db.costCenters.map(c => [c.name, `${c.name} — ${c.branch || ''}`]) }),
       C('costType', 'نوع التكلفة', { render: plain, input: 'select', options: () => COST_TYPES }),
       C('hireDate', 'تاريخ التعيين', D), C('salary', 'الراتب الأساسي', { ...M, total: true }),
@@ -1240,8 +1248,9 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       C('date', 'التاريخ', D), C('employee', 'الموظف / العامل', { input: 'select', options: staffNames, full: true }),
       C('timeIn', 'الحضور', { input: 'time', optional: true }), C('timeOut', 'الانصراف', { input: 'time', optional: true }), C('status', 'الحالة', status('حاضر', 'متأخر', 'غائب', 'إجازة'))] },
     payroll: { title: 'الرواتب', sub: 'الاستحقاق: من حـ/ المرتبات إلى حـ/ المرتبات المستحقة · الصرف: من حـ/ المستحقة إلى حـ/ الخزينة', single: 'راتب', filter: 'paid', cols: [
-      C('month', 'الشهر', { input: 'month' }), C('employee', 'الموظف / العامل', { input: 'select', options: () => allStaff().map(x => [x.name, `${x.name} — ${pageInfo(x._t).title}`]) }),
-      C('group', 'فئة المرتبات', { render: plain, input: 'select', options: payGroups }),
+      C('month', 'الشهر', { input: 'month' }),
+      C('group', 'الحساب الرئيسي (فئة المرتبات)', { render: plain, input: 'select', options: () => payGroupOpts().filter(([g]) => payGroups().includes(g)) }),
+      C('employee', 'الموظف / العامل', { input: 'select', dep: ['group'], options: v => allStaff().filter(x => !v?.group || x.group === v.group).map(x => [x.name, `${x.name} — ${pageInfo(x._t).title}`]) }),
       C('costType', 'نوع التكلفة', { render: plain, input: 'select', options: () => COST_TYPES }),
       C('expAcc', 'حساب المصروف', { compute: r => accLabel(acc(payAccs(r.group, r.costType).exp) || { code: '', name: '' }), render: v => `<span class="hint">${esc(v)}</span>` }),
       C('basic', 'الأساسي', { ...M, total: true }), C('allowances', 'البدلات والحوافز', { ...M, total: true }), C('deductions', 'الاستقطاعات', { ...M, total: true }),
@@ -1290,9 +1299,10 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
           () => { const x = db.expenseOrders.find(q => q.id === r.id); if (x) x.status = 'مدفوع'; }) }] },
     supplierPayReqs: { title: 'طلبات دفع الموردين', prefix: 'SPR-', sub: 'طلب سداد لمورد (كامل الرصيد أو فاتورة محددة) — بعد الاعتماد يتحول إلى سند صرف', single: 'طلب دفع مورد', key: 'no', filter: 'status', cols: [
       C('no', 'رقم الطلب', CODE), C('date', 'التاريخ', D),
-      C('supplier', 'المورد', { input: 'select', options: names('suppliers'), full: true }),
+      C('sacc', 'الحساب الرئيسي', { input: 'select', optional: true, allowEmpty: '— كل حسابات الموردين —', options: () => childrenOf(SYS.suppliers).map(accLabel), formOnly: true }),
+      C('supplier', 'المورد', { input: 'select', dep: ['sacc'], options: v => db.suppliers.filter(x => !v?.sacc || suppAcc(x.name) === accCode(v.sacc)).map(x => x.name), full: true }),
       C('due', 'المستحق للمورد', computed(r => suppBal(r.supplier))),
-      C('invoice', 'سداد فاتورة', { input: 'select', optional: true, allowEmpty: '— بدون —', options: () => db.purchaseInvoices.map(i => [i.no, `${i.no} — ${i.supplier}`]) }),
+      C('invoice', 'سداد فاتورة', { input: 'select', optional: true, allowEmpty: '— بدون —', dep: ['supplier'], options: v => db.purchaseInvoices.filter(i => !v?.supplier || i.supplier === v.supplier).map(i => [i.no, `${i.no} — ${i.supplier}`]) }),
       C('amount', 'المبلغ المطلوب', { ...M, total: true }), C('payDate', 'تاريخ السداد المطلوب', { ...D, optional: true }),
       C('desc', 'البيان', { full: true, optional: true }), C('status', 'الحالة', status('جديد', 'معتمد', 'مدفوع', 'مرفوض'))],
       validate: d => { const inv = db.purchaseInvoices.find(i => i.no === d.invoice); if (inv && inv.supplier !== d.supplier) return `الفاتورة ${inv.no} تخص ${inv.supplier}`; },
@@ -2082,7 +2092,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
     if (c.input === 'lines') return `<div class="field full" data-f="${c.key}"><label>${c.label}</label><div class="lines-box" data-lines="${c.key}" data-tax="${c.tax ? 1 : ''}"></div><input type="hidden" name="${c.key}" value="${esc(JSON.stringify(Array.isArray(v) ? v : []))}"></div>`;
     if (c.input === 'checks') return `<div class="field full"><label>${c.label}</label><div class="checks">${c.options().map(o => `<label class="check"><input type="checkbox" name="${c.key}" value="${esc(o)}"><span>${esc(o)}</span></label>`).join('')}</div></div>`;
     const input = c.input === 'select'
-      ? `<select class="input" name="${c.key}" ${c.optional ? '' : 'required'}>${c.allowEmpty ? `<option value="">${c.allowEmpty}</option>` : ''}${c.options().map(o => { const [ov, ol] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(ov)}" ${String(ov) === String(v) ? 'selected' : ''}>${esc(ol)}</option>`; }).join('')}</select>`
+      ? `<select class="input" name="${c.key}" ${c.optional ? '' : 'required'}>${c.allowEmpty ? `<option value="">${c.allowEmpty}</option>` : ''}${c.options(vals).map(o => { const [ov, ol] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(ov)}" ${String(ov) === String(v) ? 'selected' : ''}>${esc(ol)}</option>`; }).join('')}</select>`
       : `<input class="input" name="${c.key}" type="${c.input ?? 'text'}" ${c.input === 'number' ? 'step="any"' : ''} value="${esc(v)}" ${c.placeholder ? `placeholder="${esc(c.placeholder)}"` : ''} ${c.optional ? '' : 'required'} ${c.suggest ? `data-dl="dl-${c.key}" autocomplete="off"` : ''}>${c.suggest ? `<datalist id="dl-${c.key}">${c.suggest(vals).map(o => `<option value="${esc(o)}">`).join('')}</datalist>` : ''}`;
     return `<div class="field ${c.full ? 'full' : ''}" data-f="${c.key}"><label>${c.label}</label>${input}</div>`;
   };
@@ -2178,6 +2188,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       const sales = lc?.priceFrom === 'price';
       const typeNow = () => m.fixed?.stype || (form.elements.namedItem('account') ? acc(form.elements.namedItem('account').value)?.name.replace(/^عملاء\s*/, '') : '') || '';
       initLines(box, form.elements.namedItem(box.dataset.lines), { tax: !!box.dataset.tax, priceOf: it => +(sales ? it.price : it.cost) || 0, sales,
+        pick: lc?.pick ? () => lc.pick(Object.fromEntries(new FormData(form))) : null, pickOn: lc?.pickOn || [],
         items: sales ? () => salesItemsFor(SALE_TYPES.some(([, t]) => t === typeNow()) ? typeNow() : '').map(i => ({ ...i, category: acc(i.account)?.name || '' })) : null,
         empty: sales ? `لا توجد أصناف ${m.fixed?.stype ? 'لـ ' + m.fixed.stype : 'مبيعات'} — أضفها من قواعد البيانات › أصناف المبيعات` : '',
         onTotal: lc?.priceFrom === 'price' ? (sub, t) => { sub = t ? t.total : sub; const a = form.elements.namedItem('amount'); if (a) { a.readOnly = sub > 0; if (sub > 0) a.value = +sub.toFixed(2); } } : null }); });
@@ -2194,6 +2205,21 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
           if (!first && inp.value && list.length && !list.includes(inp.value) && ['c', 's', 'o'].includes(partyKind(accCode(src)))) inp.value = '';
           if (list.length === 1 && !inp.value) inp.value = list[0]; }); };
       condUpd = upd; upd();
+    }
+    // قوائم تابعة: عند تغيير الحساب/المخزن تُعاد بناء القائمة التابعة له ولا تعرض إلا ما يخصه
+    const deps = fields.filter(c => c.dep && c.input === 'select');
+    if (deps.length) {
+      const rebuild = src => deps.filter(c => !src || c.dep.includes(src)).forEach(c => {
+        const s = form.elements.namedItem(c.key); if (!s || s.tagName !== 'SELECT' || s.dataset.locked) return;
+        const v = Object.fromEntries(new FormData(form)), cur = s.value, list = c.options(v).map(o => Array.isArray(o) ? o : [o, o]);
+        s.innerHTML = (c.allowEmpty ? `<option value="">${c.allowEmpty}</option>` : '') + list.map(([ov, ol]) => `<option value="${esc(ov)}">${esc(ol)}</option>`).join('');
+        s.value = list.some(([ov]) => String(ov) === String(cur)) ? cur : (c.allowEmpty ? '' : list.length === 1 ? list[0][0] : '');
+        if (!c.allowEmpty && !list.some(([ov]) => String(ov) === String(cur)) && list.length !== 1) s.selectedIndex = -1;
+        if (s.value !== cur) s.dispatchEvent(new Event('change', { bubbles: true }));
+        syncSelect(s);
+      });
+      [...new Set(deps.flatMap(c => c.dep))].forEach(src => { const el = form.elements.namedItem(src); ['change', 'input'].forEach(ev => el?.addEventListener(ev, () => rebuild(src))); });
+      if (!record) rebuild();
     }
     // تعبئة تلقائية عند اختيار عنصر مرتبط
     if (m.onSelect) {
@@ -2325,8 +2351,9 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
   }
 
   // ---------- محرر الأصناف (مثل Excel): صف لكل صنف، يجلب بيانات الصنف تلقائياً ----------
-  function initLines(box, hidden, { tax, priceOf, onTotal, items, empty, sales }) {
-    let ITEMS = items ? items() : db.items;
+  function initLines(box, hidden, { tax, priceOf, onTotal, items, empty, sales, pick, pickOn = [] }) {
+    const pickItems = () => { const f = pick && pick(); return f ? db.items.filter(f) : db.items; };
+    let ITEMS = items ? items() : pickItems();
     let rows = []; try { rows = JSON.parse(hidden.value || '[]'); } catch {}
     rows = rows.map(l => ({ ...l, _it: l.item, _vEdited: sales && l.value != null && l.value !== '' && Math.abs(+l.value - (+l.qty || 0) * (+l.price || 0)) > 0.005 }));
     const blank = () => ({ item: '', unit: '', qty: '', price: '', vatRate: tax ? db.settings.vat ?? 14 : 0, whtRate: tax ? 1 : 0, ...(sales ? { count: '', uw: '', value: '', disc: '', pack: '' } : {}) });
@@ -2446,6 +2473,8 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
     if (sales) box.addEventListener('focusin', e => { const inp = e.target.closest('[data-k="itype"]'); if (!inp) return; const l = rows[+inp.closest('tr').dataset.i];
       const dl = box.querySelector('#dl-lg-itype'); if (dl) dl.innerHTML = typesOf(itemOf(l?.item)).map(x => `<option value="${esc(x)}"></option>`).join(''); }, true);
     // فاتورة المبيعات: أصناف نوع الحساب المختار فقط
+    pickOn.forEach(k => form.elements.namedItem(k)?.addEventListener('change', () => { ITEMS = pickItems(); const dl = box.querySelector('#dl-lg-items');
+      if (dl) dl.innerHTML = ITEMS.map(i => `<option value="${esc(i.name)}">${esc([i.code, i.category, i.unit].filter(Boolean).join(' · '))}</option>`).join(''); }));
     if (sales && items) form.elements.namedItem('account')?.addEventListener('change', () => { ITEMS = items(); const dl = box.querySelector('#dl-lg-items');
       if (dl) dl.innerHTML = ITEMS.map(i => `<option value="${esc(i.name)}">${esc([i.code, i.category, i.unit].filter(Boolean).join(' · '))}</option>`).join(''); });
     draw();
