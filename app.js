@@ -774,11 +774,17 @@
     const n = acc(accCode(accV))?.name || ''; return /سيار|براد|مبرد/.test(n) ? 'month' : 'text'; };
   const periodText = r => r.periodNote ? r.periodNote : r.month && !r.from ? periodMonth(r.month) : r.from || r.to ? `من ${fmtDMY(r.from)} إلى ${fmtDMY(r.to)}` : '';
   // تجهيز حقول الفترة عند الحفظ (accKey: حقل حساب المورد)
+  // عمود واحد للفترة يقبل النص أو التاريخ كما هو (من … إلى … / أكتوبر-2026 / تاريخ)
   const periodCheck = (d, accV) => {
-    const mode = periodMode(accV);
-    if (mode === 'month') { d.month = parseMonth(d.month || d.periodNote); if (!/^\d{4}-\d{2}$/.test(d.month || '')) return 'اختر الشهر (مثال: أكتوبر-2026)'; d.periodNote = ''; d.from = ''; d.to = ''; d.periodType = 'شهر'; }
-    else if (mode === 'text') { if (!d.periodNote && (d.from || d.to)) d.periodNote = `من ${fmtDMY(d.from)} إلى ${fmtDMY(d.to)}`; d.periodNote = String(d.periodNote || '').trim();
-      if (!d.periodNote) return 'اكتب الفترة (مثال: من 1-7-2026 إلى 7-7-2026)'; d.month = ''; d.from = ''; d.to = ''; d.periodType = 'نص'; }
+    if (periodMode(accV) === 'none') return '';
+    let v = d.periodNote;
+    if (v == null || v === '') v = d.month ? periodMonth(d.month) : d.from || d.to ? `من ${fmtDMY(d.from)} إلى ${fmtDMY(d.to)}` : '';
+    v = String(v ?? '').trim();
+    if (/^\d{5}(\.\d+)?$/.test(v)) { const dt = new Date(Date.UTC(1899, 11, 30) + Math.round(+v) * 864e5); v = fmtDMY(dt.toISOString().slice(0, 10)); } // تاريخ Excel
+    else if (/^\d{4}-\d{2}-\d{2}$/.test(v)) v = fmtDMY(v);
+    else if (/^\d{4}-\d{2}$/.test(v)) v = periodMonth(v);
+    if (!v) return 'اكتب الفترة (نص أو تاريخ — مثال: من 1-7-2026 إلى 7-7-2026 أو أكتوبر-2026)';
+    d.periodNote = v; d.month = ''; d.from = ''; d.to = ''; d.periodType = '';
     return ''; };
   // حساب المصروف المقترح حسب نوع المورد (عمالة / معدات / سيارات)
   // موردو البضاعة (محاصيل / بضاعة / نقدي) يُستلم منهم مخزون، وغيرهم موردو خدمات بفترة وحساب مقابل
@@ -1159,14 +1165,14 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       C('branch', 'الفرع', { input: 'select', optional: true, allowEmpty: '—', options: names('branches'), when: f => suppKind(f.account) === 'goods' }),
       C('docNo', 'رقم المستند', { aka: ['رقم الفاتورة', 'رقم مستند المورد'], optional: true, cls: 'code', when: f => suppKind(f.account) === 'goods' }),
       // موردو الخدمات
-      C('month', 'الشهر (سيارات / برادات)', { input: 'month', optional: true, formOnly: true, aka: ['الشهر'], when: f => periodMode(f.account) === 'month' }),
-      C('periodNote', 'الفترة (عمالة / معدات)', { optional: true, full: true, formOnly: true, aka: ['الفترة', 'فترة الاستحقاق'], placeholder: 'مثال: من 1-7-2026 إلى 7-7-2026', when: f => periodMode(f.account) === 'text' }),
+      C('periodNote', 'الفترة', { optional: true, formOnly: true, full: true, aka: ['الشهر', 'فترة الاستحقاق', 'الفترة (عمالة / معدات)', 'الشهر (سيارات / برادات)'], placeholder: 'نص أو تاريخ — مثال: من 1-7-2026 إلى 7-7-2026 أو أكتوبر-2026', render: (v, r) => esc(periodText(r)), when: f => periodMode(f.account) !== 'none' && periodMode(f.account) !== '' }),
       C('expAcc', 'الحساب المقابل', { aka: ['حساب المصروف المقابل', 'حساب المصروف'], input: 'select', optional: true, allowEmpty: '— اختر الحساب المقابل —', options: () => leafAccounts().filter(a => a.code.startsWith(SYS.expenses) || isInvAcc(a.code)).map(accLabel), formOnly: true, full: true, when: f => suppKind(f.account) === 'service' }),
       C('period', 'الفترة / المستند', { compute: r => r.store ? (r.docNo ? `مستند ${r.docNo}` : '—') : periodText(r) }),
       C('counter', 'الحساب المقابل', { compute: r => accCode(r.store || r.expAcc) ? accLabel(acc(accCode(r.store || r.expAcc)) || { code: '', name: r.store || r.expAcc }) : '', render: v => `<span class="hint">${esc(v)}</span>` }),
       C('amount', 'المبلغ', { ...M, total: true, aka: ['المبلغ المستحق'] }),
       C('bal', 'رصيد المورد الحالي', computed(r => suppBal(r.party))),
       C('desc', 'البيان', { optional: true, full: true, formOnly: true })],
+      load: r => r.periodNote || r.store ? {} : { periodNote: periodText(r) },
       onSelect: { account: (f, v) => { const e = f.namedItem('expAcc'); if (e && !e.value && suppKind(v) === 'service') { const d = defaultExpFor(v); if (d) e.value = d; } },
         party: (f, v) => { const h = [...db.supplierAccruals].reverse().find(r => r.party === v);
           if (h?.expAcc && f.namedItem('expAcc')) f.namedItem('expAcc').value = h.expAcc; if (h?.store && f.namedItem('store') && !f.namedItem('store').value) f.namedItem('store').value = h.store; } },
@@ -1204,8 +1210,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       C('branch', 'الفرع', { input: 'select', optional: true, allowEmpty: '—', options: names('branches'), when: f => suppKind(f.sacc) === 'goods' }),
       C('docNo', 'رقم فاتورة المورد', { aka: ['رقم المستند'], optional: true, cls: 'code', when: f => suppKind(f.sacc) === 'goods' }),
       // موردو الخدمات
-      C('month', 'الشهر (سيارات / برادات)', { input: 'month', optional: true, formOnly: true, aka: ['الشهر'], when: f => periodMode(f.sacc) === 'month' }),
-      C('periodNote', 'الفترة (عمالة / معدات)', { optional: true, full: true, formOnly: true, aka: ['الفترة'], placeholder: 'مثال: من 1-7-2026 إلى 7-7-2026', when: f => periodMode(f.sacc) === 'text' }),
+      C('periodNote', 'الفترة', { optional: true, formOnly: true, full: true, aka: ['الشهر', 'فترة الاستحقاق', 'الفترة (عمالة / معدات)', 'الشهر (سيارات / برادات)'], placeholder: 'نص أو تاريخ — مثال: من 1-7-2026 إلى 7-7-2026 أو أكتوبر-2026', render: (v, r) => esc(periodText(r)), when: f => periodMode(f.sacc) !== 'none' && periodMode(f.sacc) !== '' }),
       C('expAcc', 'الحساب المقابل', { aka: ['يُحمّل على حساب', 'حساب المصروف'], input: 'select', optional: true, allowEmpty: '— اختر الحساب المقابل —', options: () => leafAccounts().filter(a => a.code.startsWith(SYS.expenses) || isInvAcc(a.code) || a.code.startsWith('11')).map(accLabel), formOnly: true, full: true, when: f => suppKind(f.sacc) === 'service' }),
       C('counter', 'الحساب المقابل', { compute: r => { const c = accCode(r.store || r.expAcc || r.account); return c && acc(c) ? accLabel(acc(c)) : ''; }, render: v => `<span class="hint">${esc(v)}</span>` }),
       C('period', 'الفترة / المستند', { compute: r => r.store || r.docNo ? (r.docNo ? `فاتورة ${r.docNo}` : '—') : periodText(r) || '—' }),
@@ -1215,7 +1220,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       C('status', 'الحالة', statusOf(purchStatus, 'معلقة', 'مدفوعة جزئياً', 'مدفوعة', 'متأخرة'))],
       defaults: () => ({ due: addDays(today(), 30), store: acc(SYS.defPurchase) ? accLabel(acc(SYS.defPurchase)) : '' }),
       // الفواتير القديمة: الحساب المحمّل عليه يصبح المخزون المستلم أو الحساب المقابل
-      load: r => r.sacc ? {} : { sacc: acc(suppAcc(r.supplier)) ? accLabel(acc(suppAcc(r.supplier))) : '', ...(isInvAcc(accCode(r.account)) ? { store: r.account } : { expAcc: r.account, month: String(r.date || '').slice(0, 7) }) },
+      load: r => r.sacc ? (r.periodNote || r.store ? {} : { periodNote: periodText(r) }) : { periodNote: periodText(r), sacc: acc(suppAcc(r.supplier)) ? accLabel(acc(suppAcc(r.supplier))) : '', ...(isInvAcc(accCode(r.account)) ? { store: r.account } : { expAcc: r.account, month: String(r.date || '').slice(0, 7) }) },
       onSelect: { sacc: (f, v) => { const e = f.namedItem('expAcc'); if (e && !e.value && suppKind(v) === 'service') { const d = defaultExpFor(v); if (d) e.value = d; } },
         supplier: (f, v) => { const sa = f.namedItem('sacc'); if (sa && !sa.value) { const c = suppAcc(v); if (acc(c) && c !== SYS.suppliers) sa.value = accLabel(acc(c)); }
           const h = [...db.purchaseInvoices].reverse().find(r => r.supplier === v); if (h?.expAcc && f.namedItem('expAcc')) f.namedItem('expAcc').value = h.expAcc; if (h?.store && f.namedItem('store')) f.namedItem('store').value = h.store; } },
@@ -1232,7 +1237,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
         } else {
           if (!accCode(d.expAcc) && accCode(d.account)) d.expAcc = d.account;
           ['store', 'branch', 'docNo'].forEach(k => { d[k] = ''; });
-          if (periodMode(d.sacc) === 'month' && !d.month && !d.periodNote) d.month = String(d.date || today()).slice(0, 7);
+          if (!d.periodNote && !d.month && !d.from && periodMode(d.sacc) === 'month') d.month = String(d.date || today()).slice(0, 7);
           const pe = periodCheck(d, d.sacc); if (pe) return pe;
           if (!accCode(d.expAcc)) return 'اختر الحساب المقابل';
         }
