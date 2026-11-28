@@ -417,7 +417,11 @@
   const custAcc = name => catAcc(SYS.customers, db.customers.find(c => c.name === name)?.category);
   // حسابات العملاء (فئات تحت 123) وعملاء كل حساب
   const custAccOpts = () => childrenOf(SYS.customers).map(a => [a.code, accLabel(a)]);
-  const custOfAcc = code => db.customers.filter(c => !code || custAcc(c.name) === code).map(c => c.name);
+  // نفس الاسم قد يتكرر في أكثر من حساب رئيسي (مثلاً مورد سيارات ومورد عمالة): الحساب يُؤخذ من تصنيف السجل نفسه
+  const recAcc = (root, r) => catAcc(root, r?.category);
+  const custOfAcc = code => [...new Set(db.customers.filter(c => !code || recAcc(SYS.customers, c) === code).map(c => c.name))];
+  // المستند يخص حساب الطرف إذا كان حسابه (اسم الحساب) هو نفس الحساب، أو بدون حساب محدد
+  const docOnAcc = (doc, code) => { if (!code) return true; const d = accCode(doc.account || doc.sacc || ''); return !d || !(d.startsWith(SYS.customers) || d.startsWith(SYS.suppliers)) || d === code; };
   // إيرادات مواد التعبئة (424)، وإن لم يوجد الحساب تُضم للمبيعات
   const packAcc = () => acc('424') ? '424' : SYS.otherRev;
   const suppAcc = name => catAcc(SYS.suppliers, db.suppliers.find(s => s.name === name)?.category);
@@ -586,15 +590,17 @@
   const rollup = code => memo('roll:' + code, () => { const a = acc(code); return (a ? ownBal(a) : 0) + sum(childrenOf(code), c => rollup(c.code) * (isDebitNature(c.code) === isDebitNature(code) ? 1 : -1)); });
 
   // ----- العملاء والموردون -----
-  const custBal = name => memo('cb:' + name, () => {
-    const c = db.customers.find(x => x.name === name);
-    return custOpen(c) + openOf(OPEN_TYPES[2], name) + sum(eff('salesInvoices').filter(i => i.customer === name), invTotal)
-      - sum(eff('salesReturns').filter(r => r.customer === name), r => r.amount) - sum(eff('receipts').filter(r => r.party === name && isPartyDoc(r, 'c')), r => r.amount);
+  const custBal = (name, code) => memo('cb:' + name + '|' + (code || ''), () => {
+    const c = db.customers.find(x => x.name === name && (!code || recAcc(SYS.customers, x) === code));
+    const on = d => docOnAcc(d, code);
+    return custOpen(c) + openOf(OPEN_TYPES[2], name) + sum(eff('salesInvoices').filter(i => i.customer === name && on(i)), invTotal)
+      - sum(eff('salesReturns').filter(r => r.customer === name && on(r)), r => r.amount) - sum(eff('receipts').filter(r => r.party === name && isPartyDoc(r, 'c') && on(r)), r => r.amount);
   });
-  const suppBal = name => memo('sb:' + name, () => {
-    const s = db.suppliers.find(x => x.name === name);
-    return suppOpen(s) + openOf(OPEN_TYPES[3], name) + sum(eff('purchaseInvoices').filter(i => i.supplier === name), i => i.amount) + sum(eff('stockIn').filter(r => r.supplier === name), r => docTotals(r).net) + sum(eff('supplierAccruals').filter(r => r.party === name), r => +r.amount || 0)
-      - sum(eff('purchaseReturns').filter(r => r.supplier === name), r => r.amount) - sum(eff('payments').filter(r => r.party === name && isPartyDoc(r, 's')), r => r.amount);
+  const suppBal = (name, code) => memo('sb:' + name + '|' + (code || ''), () => {
+    const on = d => docOnAcc(d, code);
+    const s = db.suppliers.find(x => x.name === name && (!code || recAcc(SYS.suppliers, x) === code));
+    return suppOpen(s) + openOf(OPEN_TYPES[3], name) + sum(eff('purchaseInvoices').filter(i => i.supplier === name && on(i)), i => i.amount) + sum(eff('stockIn').filter(r => r.supplier === name), r => docTotals(r).net) + sum(eff('supplierAccruals').filter(r => r.party === name && on(r)), r => +r.amount || 0)
+      - sum(eff('purchaseReturns').filter(r => r.supplier === name && on(r)), r => r.amount) - sum(eff('payments').filter(r => r.party === name && isPartyDoc(r, 's') && on(r)), r => r.amount);
   });
   const salesPaid = inv => sum(eff('receipts').filter(r => r.invoice === inv.no), r => r.amount) + sum(eff('salesReturns').filter(r => r.invoice === inv.no), r => r.amount);
   const purchPaid = inv => sum(eff('payments').filter(r => r.invoice === inv.no), r => r.amount) + sum(eff('purchaseReturns').filter(r => r.invoice === inv.no), r => r.amount);
@@ -743,8 +749,8 @@
   // خزائن الصرف لأوامر الدفع وطلبات الدفع: الخزينة الرئيسية والبنوك (وليست خزينة الإيرادات)
   const payBoxOpts = () => db.cashboxes.filter(b => isExpBox(b) || isBankBox(b)).map(b => b.name);
   const partyOpts = v => { const code = accCode(v), k = partyKind(code);
-    if (k === 'c') return db.customers.filter(c => code === SYS.customers || custAcc(c.name) === code).map(c => c.name);
-    if (k === 's') return db.suppliers.filter(s => code === SYS.suppliers || suppAcc(s.name) === code).map(s => s.name);
+    if (k === 'c') return [...new Set(db.customers.filter(c => code === SYS.customers || recAcc(SYS.customers, c) === code).map(c => c.name))];
+    if (k === 's') return [...new Set(db.suppliers.filter(s => code === SYS.suppliers || recAcc(SYS.suppliers, s) === code).map(s => s.name))];
     if (k === 'o') return [acc(code)?.name].filter(Boolean);
     const hist = [...db.receipts, ...db.payments].filter(r => code && accCode(r.account) === code && r.party && r.party !== 'أخرى').map(r => r.party);
     return [...new Set(k === 'e' ? [...staffNames(), ...db.workers.map(w => w.name), ...hist] : hist)]; };
@@ -795,7 +801,7 @@
     if (!isCustomer(d.customer)) return d.customer ? `العميل "${d.customer}" غير موجود في قاعدة بيانات العملاء` : 'اختر اسم العميل';
     if (!d.account) d.account = custAcc(d.customer);
     if (!d.due && !noDue) d.due = addDays(d.date || today(), 30);
-    if (custAcc(d.customer) !== d.account) return `العميل "${d.customer}" ليس من ${acc(d.account)?.name || 'هذا الحساب'}`;
+    if (!custOfAcc(d.account).includes(d.customer)) return `العميل "${d.customer}" ليس من ${acc(d.account)?.name || 'هذا الحساب'}`;
     const ty = acc(d.account)?.name.replace(/^عملاء\s*/, ''); if (ty && SALE_TYPES.some(([, t]) => t === ty)) d.stype = ty;
   }
   function salesLinesCheck(d, rec, dir) {
@@ -873,22 +879,22 @@
     if (d.openDr && d.openCr) return 'اكتب رصيد أول المدة في خانة المدين أو الدائن وليس الاثنين'; return ''; };
   const modules = {
     // ===== البيانات الأساسية =====
-    customers: { title: 'العملاء', sub: 'كل تصنيف له حساب مستقل في شجرة الحسابات تحت حـ/ العملاء', single: 'عميل', key: 'name', filter: 'category', cols: [
+    customers: { title: 'العملاء', sub: 'كل تصنيف له حساب مستقل في شجرة الحسابات تحت حـ/ العملاء — نفس الاسم يمكن تسجيله في أكثر من حساب رئيسي', single: 'عميل', key: 'name', keyScope: 'category', filter: 'category', cols: [
       C('code', 'الكود', CODE), C('name', 'اسم العميل', { full: true }),
       C('category', 'الحساب الرئيسي', { render: plain, input: 'select', options: mainAccOpts(SYS.customers), aka: ['التصنيف'] }),
       C('phone', 'الهاتف', { input: 'tel' }), C('city', 'المدينة'),
       C('limit', 'حد الائتمان', M), C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, formOnly: true, aka: ['رصيد أول المدة'] }),
       C('openCr', 'رصيد أول المدة — دائن', { ...M, optional: true, formOnly: true }),
-      C('balance', 'الرصيد الحالي', computed(r => custBal(r.name), { total: true, render: (v, r) => v > +r.limit && +r.limit ? `<span class="pill red" title="تجاوز حد الائتمان">${money(v)}</span>` : money(v) }))],
+      C('balance', 'الرصيد الحالي', computed(r => custBal(r.name, recAcc(SYS.customers, r)), { total: true, render: (v, r) => v > +r.limit && +r.limit ? `<span class="pill red" title="تجاوز حد الائتمان">${money(v)}</span>` : money(v) }))],
       actions: [{ icon: 'list', title: 'كشف حساب العميل', fn: r => customerStatement(r) }],
       load: r => r.opening && !+r.openDr && !+r.openCr ? { openDr: +r.opening > 0 ? +r.opening : 0, openCr: +r.opening < 0 ? -r.opening : 0 } : {},
       validate: d => openPair(d) },
-    suppliers: { title: 'الموردون', sub: 'كل تصنيف له حساب مستقل في شجرة الحسابات تحت حـ/ الموردين', single: 'مورد', key: 'name', filter: 'category', cols: [
+    suppliers: { title: 'الموردون', sub: 'كل تصنيف له حساب مستقل في شجرة الحسابات تحت حـ/ الموردين — نفس الاسم يمكن تسجيله في أكثر من حساب رئيسي', single: 'مورد', key: 'name', keyScope: 'category', filter: 'category', cols: [
       C('code', 'الكود', CODE), C('name', 'اسم المورد', { full: true }), C('phone', 'الهاتف', { input: 'tel' }), C('city', 'المدينة'),
       C('category', 'الحساب الرئيسي', { render: plain, input: 'select', options: mainAccOpts(SYS.suppliers), aka: ['التصنيف'] }),
 C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, formOnly: true }),
       C('openCr', 'رصيد أول المدة — دائن', { ...M, optional: true, formOnly: true, aka: ['رصيد أول المدة'] }),
-      C('balance', 'المستحق للمورد', computed(r => suppBal(r.name), { total: true }))],
+      C('balance', 'المستحق للمورد', computed(r => suppBal(r.name, recAcc(SYS.suppliers, r)), { total: true }))],
       actions: [{ icon: 'list', title: 'كشف حساب المورد', fn: r => supplierStatement(r) }],
       load: r => r.opening && !+r.openDr && !+r.openCr ? { openCr: +r.opening > 0 ? +r.opening : 0, openDr: +r.opening < 0 ? -r.opening : 0 } : {},
       validate: d => openPair(d) },
@@ -1344,7 +1350,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       C('no', 'رقم الطلب', CODE), C('date', 'التاريخ', D),
       C('box', 'يُصرف من (الخزينة الرئيسية / البنوك)', { input: 'select', options: payBoxOpts }),
       C('sacc', 'الحساب الرئيسي', { input: 'select', optional: true, allowEmpty: '— كل حسابات الموردين —', options: () => childrenOf(SYS.suppliers).map(accLabel), formOnly: true }),
-      C('supplier', 'المورد', { input: 'select', dep: ['sacc'], options: v => db.suppliers.filter(x => !v?.sacc || suppAcc(x.name) === accCode(v.sacc)).map(x => x.name), full: true }),
+      C('supplier', 'المورد', { input: 'select', dep: ['sacc'], options: v => [...new Set(db.suppliers.filter(x => !v?.sacc || recAcc(SYS.suppliers, x) === accCode(v.sacc)).map(x => x.name))], full: true }),
       C('due', 'المستحق للمورد', computed(r => suppBal(r.supplier))),
       C('invoice', 'سداد فاتورة', { input: 'select', optional: true, allowEmpty: '— بدون —', dep: ['supplier'], options: v => db.purchaseInvoices.filter(i => !v?.supplier || i.supplier === v.supplier).map(i => [i.no, `${i.no} — ${i.supplier}`]) }),
       C('amount', 'المبلغ المطلوب', { ...M, total: true }), C('payDate', 'تاريخ السداد المطلوب', { ...D, optional: true }),
@@ -2227,7 +2233,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       locks.forEach(k => { data[k] = prefill[k]; });
       fields.forEach(c => { if (c.input === 'number') data[c.key] = +data[c.key] || 0; if (c.input === 'lines' || c.input === 'jlines') { try { data[c.key] = JSON.parse(data[c.key] || '[]'); } catch { data[c.key] = []; } } });
       if (!cur) ['no', 'code'].forEach(k => { if (fields.some(c => c.key === k) && (!data[k] || db[T].some(r => r[k] === data[k]))) data[k] = autoNo(T, k); });
-      if (m.key && db[T].some(r => r !== cur && r[m.key] === data[m.key])) { toast(`"${data[m.key]}" مسجل من قبل`); return false; }
+      if (m.key && db[T].some(r => r !== cur && r[m.key] === data[m.key] && (!m.keyScope || (r[m.keyScope] || '') === (data[m.keyScope] || '')))) { toast(`"${data[m.key]}" مسجل من قبل${m.keyScope ? ' في نفس الحساب الرئيسي' : ''}`); return false; }
       if (m.fixed && !cur) Object.assign(data, m.fixed);
       const err = m.validate?.(data, cur);
       if (err) { toast(err, 3500); return false; }
@@ -2235,7 +2241,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       const changed = !cur || fields.some(c => sv(cur[c.key]) !== sv(data[c.key]));
       let saved = cur;
       if (cur) {
-        if (m.key && cur[m.key] !== data[m.key]) (refs[T] || []).forEach(([tb, f]) => db[tb].forEach(r => { if (r[f] === cur[m.key]) r[f] = data[m.key]; (Array.isArray(r.lines) ? r.lines : []).forEach(l => { if (l[f] === cur[m.key]) l[f] = data[m.key]; }); }));
+        if (m.key && cur[m.key] !== data[m.key] && !db[T].some(r => r !== cur && r[m.key] === cur[m.key])) (refs[T] || []).forEach(([tb, f]) => db[tb].forEach(r => { if (r[f] === cur[m.key]) r[f] = data[m.key]; (Array.isArray(r.lines) ? r.lines : []).forEach(l => { if (l[f] === cur[m.key]) l[f] = data[m.key]; }); }));
         Object.assign(cur, data);
       } else {
         saved = { id: genId(), ...data, ...(m.fixed || {}) };
@@ -2572,22 +2578,22 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
 
   function customerStatement(c) {
     const rows = [
-      ...eff('salesInvoices').filter(i => i.customer === c.name).map(i => ({ date: i.date, ref: i.no, desc: 'فاتورة مبيعات', a: invTotal(i), go: 'salesInvoices' })),
-      ...eff('salesReturns').filter(i => i.customer === c.name).map(i => ({ date: i.date, ref: i.no, desc: `مرتجع — ${i.reason}`, b: +i.amount, go: 'salesReturns' })),
-      ...eff('receipts').filter(i => i.party === c.name && isPartyDoc(i, 'c')).map(i => ({ date: i.date, ref: i.no, desc: i.desc || 'سند قبض', b: +i.amount, go: 'receipts' })),
+      ...eff('salesInvoices').filter(i => i.customer === c.name && docOnAcc(i, recAcc(SYS.customers, c))).map(i => ({ date: i.date, ref: i.no, desc: 'فاتورة مبيعات', a: invTotal(i), go: 'salesInvoices' })),
+      ...eff('salesReturns').filter(i => i.customer === c.name && docOnAcc(i, recAcc(SYS.customers, c))).map(i => ({ date: i.date, ref: i.no, desc: `مرتجع — ${i.reason}`, b: +i.amount, go: 'salesReturns' })),
+      ...eff('receipts').filter(i => i.party === c.name && isPartyDoc(i, 'c') && docOnAcc(i, recAcc(SYS.customers, c))).map(i => ({ date: i.date, ref: i.no, desc: i.desc || 'سند قبض', b: +i.amount, go: 'receipts' })),
     ];
-    openInfo(`كشف حساب العميل: ${c.name}`, statementHTML(custOpen(c), rows, { summary: [['التصنيف', esc(c.category || '—')], ['حد الائتمان', money(c.limit)], ['الرصيد الحالي', money(custBal(c.name))], ['المتاح', money(Math.max(0, c.limit - custBal(c.name)))]] }));
+    openInfo(`كشف حساب العميل: ${c.name}`, statementHTML(custOpen(c), rows, { summary: [['التصنيف', esc(c.category || '—')], ['حد الائتمان', money(c.limit)], ['الرصيد الحالي', money(custBal(c.name, recAcc(SYS.customers, c)))], ['المتاح', money(Math.max(0, c.limit - custBal(c.name)))]] }));
     bindStatementLinks();
   }
   function supplierStatement(s) {
     const rows = [
-      ...eff('purchaseInvoices').filter(i => i.supplier === s.name).map(i => ({ date: i.date, ref: i.no, desc: 'فاتورة مشتريات', a: +i.amount, go: 'purchaseInvoices' })),
-      ...eff('purchaseReturns').filter(i => i.supplier === s.name).map(i => ({ date: i.date, ref: i.no, desc: `مرتجع — ${i.reason}`, b: +i.amount, go: 'purchaseReturns' })),
-      ...eff('supplierAccruals').filter(i => i.party === s.name).map(i => ({ date: i.date, ref: i.no, desc: i.store ? `استلام ${acc(accCode(i.store))?.name || ''}${i.docNo ? ' — مستند ' + i.docNo : ''}` : `استحقاق ${periodText(i)}${i.desc ? ' — ' + i.desc : ''}`, a: +i.amount, go: 'supplierAccruals' })),
+      ...eff('purchaseInvoices').filter(i => i.supplier === s.name && docOnAcc(i, recAcc(SYS.suppliers, s))).map(i => ({ date: i.date, ref: i.no, desc: 'فاتورة مشتريات', a: +i.amount, go: 'purchaseInvoices' })),
+      ...eff('purchaseReturns').filter(i => i.supplier === s.name && docOnAcc(i, recAcc(SYS.suppliers, s))).map(i => ({ date: i.date, ref: i.no, desc: `مرتجع — ${i.reason}`, b: +i.amount, go: 'purchaseReturns' })),
+      ...eff('supplierAccruals').filter(i => i.party === s.name && docOnAcc(i, recAcc(SYS.suppliers, s))).map(i => ({ date: i.date, ref: i.no, desc: i.store ? `استلام ${acc(accCode(i.store))?.name || ''}${i.docNo ? ' — مستند ' + i.docNo : ''}` : `استحقاق ${periodText(i)}${i.desc ? ' — ' + i.desc : ''}`, a: +i.amount, go: 'supplierAccruals' })),
       ...eff('stockIn').filter(i => i.supplier === s.name).map(i => ({ date: i.date, ref: i.no, desc: `إذن إضافة — ${linesSummary(i)}`, a: docTotals(i).net, go: 'stockIn' })),
-      ...eff('payments').filter(i => i.party === s.name && isPartyDoc(i, 's')).map(i => ({ date: i.date, ref: i.no, desc: i.desc || 'سند صرف', b: +i.amount, go: 'payments' })),
+      ...eff('payments').filter(i => i.party === s.name && isPartyDoc(i, 's') && docOnAcc(i, recAcc(SYS.suppliers, s))).map(i => ({ date: i.date, ref: i.no, desc: i.desc || 'سند صرف', b: +i.amount, go: 'payments' })),
     ];
-    openInfo(`كشف حساب المورد: ${s.name}`, statementHTML(suppOpen(s), rows, { inc: 'دائن (له)', dec: 'مدين (منه)', summary: [['التصنيف', esc(s.category || '—')], ['المستحق له', money(suppBal(s.name))], ['عدد الفواتير', rows.filter(r => r.a).length], ['المسدد', money(sum(rows, r => r.b))]] }));
+    openInfo(`كشف حساب المورد: ${s.name}`, statementHTML(suppOpen(s), rows, { inc: 'دائن (له)', dec: 'مدين (منه)', summary: [['التصنيف', esc(s.category || '—')], ['المستحق له', money(suppBal(s.name, recAcc(SYS.suppliers, s)))], ['عدد الفواتير', rows.filter(r => r.a).length], ['المسدد', money(sum(rows, r => r.b))]] }));
     bindStatementLinks();
   }
   function itemCard(it) {
@@ -3615,8 +3621,9 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
   // والصنف الجديد يُكوَّد في أصناف المبيعات الخاصة بنوع المبيعات، والنوع الجديد يُضاف لأنواع الصنف
   function salesAutoCreate(d, made) {
     const name = String(d.customer || '').trim();
-    if (name && !isCustomer(name)) {
-      const ca = childrenOf(SYS.customers).find(x => x.code === d.account);
+    const ca0 = childrenOf(SYS.customers).find(x => x.code === d.account);
+    if (name && (ca0 ? !db.customers.some(c => c.name === name && c.category === ca0.name) : !isCustomer(name))) {
+      const ca = ca0;
       if (ca) { db.customers.push({ id: genId(), code: nextNo(db.customers, 'code') || 'C-001', name, category: ca.name, phone: '', city: '', limit: 0 }); made.cust.push(name); cache = {}; }
     }
     if (!d.account && isCustomer(name)) d.account = custAcc(name);
@@ -3725,10 +3732,12 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
       try {
         for (const c of fields) if (colIdx[c.key] >= 0) out.data[c.key] = convert(c, r[colIdx[c.key]]);
         const keyVal = keyIdx >= 0 ? out.data[def.key] : '';
-        const existing = keyVal !== '' && keyVal != null ? db[t].find(x => String(x[def.key]) === String(keyVal)) : null;
-        if (keyVal && seen.has(keyVal) && !def.lineImport) throw new Error(`"${keyVal}" مكرر في الملف`);
+        const sc = def.keyScope, scVal = sc ? String(out.data[sc] ?? '') : '';
+        const existing = keyVal !== '' && keyVal != null ? db[t].find(x => String(x[def.key]) === String(keyVal) && (!sc || String(x[sc] || '') === scVal)) : null;
+        const seenKey = keyVal + (sc ? '|' + scVal : '');
+        if (keyVal && seen.has(seenKey) && !def.lineImport) throw new Error(`"${keyVal}" مكرر في الملف${sc ? ' لنفس الحساب الرئيسي' : ''}`);
         if (def.lineImport && existing) throw new Error(`"${keyVal}" موجود من قبل`);
-        if (keyVal) seen.add(keyVal);
+        if (keyVal) seen.add(seenKey);
         if (existing) {
           if (mode !== 'upsert') throw new Error(`"${keyVal}" موجود من قبل — اختر "إضافة وتحديث" لتعديله`);
           if (!can(t, 'e')) throw new Error('ليس لديك صلاحية التعديل');
