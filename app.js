@@ -199,11 +199,35 @@
         if (data.length < 1000) break;
       }
     }
-    const start = (async () => {
-      sb.channel('acc-docs').on('postgres_changes', { event: '*', schema: 'public', table: 'docs' }, ev => {
+    // الاتصال اللحظي: المتصفح يقطعه عند خمول التبويب أو النوم أو تقطع الإنترنت — نعيد الاتصال تلقائياً
+    // وبعد عودته نعيد تحميل البيانات حتى لا يفوتنا ما تغيّر أثناء الانقطاع
+    const statusL = new Set(); let ch = null, connected = false, wasDown = false, retry = 0, retryT = null, gen = 0;
+    const setStatus = st => statusL.forEach(f => f(st));
+    async function resync() {
+      const old = new Set(docs.keys()); docs.clear();
+      try { await loadAll(); } catch (e) { return; }
+      for (const k of new Set([...old, ...docs.keys()])) touch(k);
+    }
+    function subscribe() {
+      clearTimeout(retryT); const my = ++gen;
+      if (ch) { try { sb.removeChannel(ch); } catch {} }
+      ch = sb.channel('acc-docs-' + my).on('postgres_changes', { event: '*', schema: 'public', table: 'docs' }, ev => {
         if (ev.eventType === 'DELETE') { if (ev.old?.path) { docs.delete(ev.old.path); touch(ev.old.path); } }
         else if (ev.new?.path) { docs.set(ev.new.path, ev.new.body); touch(ev.new.path); }
-      }).subscribe(st => { if (st === 'CHANNEL_ERROR' || st === 'TIMED_OUT') errL.forEach(f => f({ code: 'unavailable' })); });
+      }).subscribe(st => {
+        if (my !== gen) return; // حالة قناة قديمة
+        if (st === 'SUBSCRIBED') { connected = true; retry = 0; if (wasDown && loaded) resync(); wasDown = false; setStatus('ok'); }
+        else if (st === 'CHANNEL_ERROR' || st === 'TIMED_OUT' || st === 'CLOSED') {
+          connected = false; wasDown = true; setStatus('reconnecting');
+          retryT = setTimeout(subscribe, Math.min(30000, 1000 * 2 ** retry++));
+        }
+      });
+    }
+    const wake = () => { if (!connected) { retry = 0; subscribe(); } };
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) wake(); });
+    addEventListener('online', wake);
+    const start = (async () => {
+      subscribe();
       await loadAll(); loaded = true;
       for (const c of colL.keys()) emitColl(c);
       for (const p of docL.keys()) emitDoc(p);
@@ -211,6 +235,7 @@
     const add = (m, k, f) => { if (!m.has(k)) m.set(k, new Set()); m.get(k).add(f); return () => m.get(k).delete(f); };
     return {
       ready: start,
+      onStatus: f => { statusL.add(f); return () => statusL.delete(f); },
       collection: c => ({ onSnapshot(cb, err) { if (err) errL.add(err); const off = add(colL, c, cb); if (loaded) emitColl(c); return off; } }),
       doc: p => ({
         onSnapshot(cb, err) { if (err) errL.add(err); const off = add(docL, p, cb); if (loaded) cb(docSnap(p)); return off; },
@@ -226,6 +251,7 @@
     if (supaReady) return supaReady;
     store.me = { id: supa.user.id, name: '', avatarUrl: '', isOwner: false, canEdit: false };
     store.cloud = supaAdapter(supa.sb);
+    store.cloud.onStatus(st => { if (!store.ready) return; if (st === 'ok') { if (store.status === 'reconnecting' || store.status === 'error') setSync(store.pumping ? 'saving' : 'saved'); } else if (!store.pumping) setSync('reconnecting'); });
     try { sessionStorage.setItem('acc-supa-tab', '1'); } catch {}
     supaReady = new Promise(res => { store.onReady = res; });
     loadPrefs(store.cloud).then(() => attachCloud());
@@ -5121,7 +5147,7 @@ C('openDr', 'رصيد أول المدة — مدين (يُرحّل بعد الا
   function setSync(s) {
     store.status = s;
     const map = { connecting: ['جارٍ الاتصال…', ''], saved: ['متصل — مزامنة لحظية', 'ok'], saving: ['جارٍ الحفظ…', 'busy'], slow: ['الاتصال بطيء — قد تكون البيانات قديمة', 'warn'],
-      error: ['انقطع الاتصال بقاعدة البيانات', 'err'], local: ['قاعدة بيانات محلية', 'local'], offline: ['قاعدة البيانات غير متاحة — حفظ مؤقت في المتصفح', 'warn'] };
+      error: ['انقطع الاتصال بقاعدة البيانات', 'err'], reconnecting: ['جارٍ إعادة الاتصال بقاعدة البيانات…', 'warn'], local: ['قاعدة بيانات محلية', 'local'], offline: ['قاعدة البيانات غير متاحة — حفظ مؤقت في المتصفح', 'warn'] };
     let [txt, cls] = map[s] || map.connecting;
     if (s === 'saving' && store.queue?.length > 5) txt = `جارٍ الحفظ… متبقي ${nf.format(store.queue.length)} سجل — لا تغلق الصفحة`;
     if (s === 'paused') { txt = `الحفظ متوقف لحظياً (حد سرعة قاعدة البيانات) ويُستأنف تلقائياً — متبقي ${nf.format(store.queue?.length || 0)} سجل، لا تغلق الصفحة`; cls = 'warn'; }
