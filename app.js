@@ -479,7 +479,7 @@
   // الرصيد الافتتاحي: نوعه يحدد الحساب، وطبيعة الحساب تحدد هل هو مدين أو دائن
   const OPEN_TYPES = ['خزينة / بنك', 'صنف في مخزن', 'عميل', 'مورد', 'حساب (مرتبات مستحقة، سلف، أصول، التزامات…)'];
   const openAcc = r => r.otype === OPEN_TYPES[0] ? boxAcc(r.box) : r.otype === OPEN_TYPES[1] ? (itemStore(r.item) || SYS.defPurchase)
-    : r.otype === OPEN_TYPES[2] ? custAcc(r.party) : r.otype === OPEN_TYPES[3] ? suppAcc(r.party) : accCode(r.account);
+    : r.otype === OPEN_TYPES[2] ? (r.pacc || custAcc(r.party)) : r.otype === OPEN_TYPES[3] ? (r.pacc || suppAcc(r.party)) : accCode(r.account);
   const openTarget = r => r.otype === OPEN_TYPES[0] ? r.box : r.otype === OPEN_TYPES[1] ? `${r.item} — ${r.warehouse} (${num(r.qty)} ${itemUnit(r.item)})`
     : r.otype === OPEN_TYPES[4] ? `${acc(accCode(r.account))?.name || r.account}${r.party ? ' — ' + r.party : ''}` : r.party;
   const natSide = r => { const a = openAcc(r); return a && acc(a) && isDebitNature(a) ? 'مدين' : 'دائن'; };
@@ -488,9 +488,42 @@
   const obCr = r => +r.dr || +r.cr ? +r.cr || 0 : natSide(r) === 'دائن' ? +r.amount || 0 : 0;
   const openSide = r => obDr(r) ? 'مدين' : obCr(r) ? 'دائن' : natSide(r);
   // العميل: المدين يزيد رصيده — المورد: الدائن يزيد المستحق له
-  const openOf = (kind, name) => sum(eff('openingBalances').filter(r => r.otype === kind && r.party === name), r => kind === OPEN_TYPES[3] ? obCr(r) - obDr(r) : obDr(r) - obCr(r));
-  const custOpen = c => +(c?.opening || 0) + (+c?.openDr || 0) - (+c?.openCr || 0);
-  const suppOpen = s => +(s?.opening || 0) + (+s?.openCr || 0) - (+s?.openDr || 0);
+  const openOf = (kind, name, code) => sum(eff('openingBalances').filter(r => r.otype === kind && r.party === name && (!code || !r.pacc || r.pacc === code)), r => kind === OPEN_TYPES[3] ? obCr(r) - obDr(r) : obDr(r) - obCr(r));
+  const custOpen = c => c?.openDoc ? 0 : +(c?.opening || 0) + (+c?.openDr || 0) - (+c?.openCr || 0);
+  const suppOpen = s => s?.openDoc ? 0 : +(s?.opening || 0) + (+s?.openCr || 0) - (+s?.openDr || 0);
+  // الرصيد الافتتاحي المكتوب في قاعدة بيانات العملاء/الموردين أو في شجرة الحسابات يتحول إلى مستند "رصيد افتتاحي"
+  // ينتظر الاعتماد، وبعد اعتماده يُرحّل قيد يومية مقابل حـ/ الأرصدة الافتتاحية ويدخل في الأرصدة
+  function syncOpeningDoc(src, spec) {
+    const cur = db.openingBalances.find(r => r.src === src);
+    const dr = +spec.dr || 0, cr = +spec.cr || 0;
+    if (!dr && !cr) {
+      if (cur && cur.appr?.status !== 'approved') { db.openingBalances = db.openingBalances.filter(r => r !== cur); return null; }
+      if (!cur) return null;
+    }
+    const same = cur && +cur.dr === dr && +cur.cr === cr && (cur.party || '') === (spec.party || '') && (cur.pacc || '') === (spec.pacc || '') && (cur.account || '') === (spec.account || '');
+    if (same) return cur;
+    const by = curUser()?.id || null, at = new Date().toISOString();
+    const doc = cur || { id: genId(), no: autoNo('openingBalances', 'no'), date: db.settings.fiscalStart || today(), src };
+    Object.assign(doc, { otype: spec.otype, party: spec.party || '', pacc: spec.pacc || '', account: spec.account || '', box: spec.box || '', dr, cr,
+      desc: spec.desc || doc.desc || '' });
+    // يحتاج اعتماداً دائماً قبل الترحيل
+    doc.appr = { status: 'pending', level: 0, steps: [...(cur?.appr?.steps || []), { action: cur ? 'resubmit' : 'submit', by, at }] };
+    if (!cur) db.openingBalances.unshift(doc);
+    cache = {};
+    return doc;
+  }
+  const accOpenSync = (a, dr, cr) => {
+    const box = db.cashboxes.find(b => b.accountNo === a.code);
+    const doc = syncOpeningDoc(`accounts/${a.id}`, box ? { otype: OPEN_TYPES[0], box: box.name, dr, cr, desc: `رصيد افتتاحي — ${box.name}` }
+      : { otype: OPEN_TYPES[4], account: accLabel(a), dr, cr, desc: `رصيد افتتاحي من شجرة الحسابات — ${accLabel(a)}` });
+    a.openDoc = doc ? doc.id : '';
+  };
+  const partyOpenSync = (t, r) => {
+    const kind = t === 'customers' ? OPEN_TYPES[2] : OPEN_TYPES[3], root = t === 'customers' ? SYS.customers : SYS.suppliers;
+    const doc = syncOpeningDoc(`${t}/${r.id}`, { otype: kind, party: r.name, pacc: recAcc(root, r), dr: +r.openDr || 0, cr: +r.openCr || 0,
+      desc: `رصيد افتتاحي من قاعدة بيانات ${t === 'customers' ? 'العملاء' : 'الموردين'} — ${r.name}` });
+    r.openDoc = doc ? doc.id : ''; r.opening = 0;
+  };
   // نوع الطرف حسب اسم الحساب: عملاء / موردون / مسحوبات مالك / عاملون / غيرها
   const partyKind = code => !code ? '' : code.startsWith(SYS.customers) ? 'c' : code.startsWith(SYS.suppliers) ? 's' : code.startsWith(SYS.drawings) ? 'o'
     : code.startsWith(SYS.otherDebit) || code.startsWith(SYS.accruedSal) || code.startsWith(SYS.expenses) ? 'e' : '';
@@ -593,13 +626,13 @@
   const custBal = (name, code) => memo('cb:' + name + '|' + (code || ''), () => {
     const c = db.customers.find(x => x.name === name && (!code || recAcc(SYS.customers, x) === code));
     const on = d => docOnAcc(d, code);
-    return custOpen(c) + openOf(OPEN_TYPES[2], name) + sum(eff('salesInvoices').filter(i => i.customer === name && on(i)), invTotal)
+    return custOpen(c) + openOf(OPEN_TYPES[2], name, code) + sum(eff('salesInvoices').filter(i => i.customer === name && on(i)), invTotal)
       - sum(eff('salesReturns').filter(r => r.customer === name && on(r)), r => r.amount) - sum(eff('receipts').filter(r => r.party === name && isPartyDoc(r, 'c') && on(r)), r => r.amount);
   });
   const suppBal = (name, code) => memo('sb:' + name + '|' + (code || ''), () => {
     const on = d => docOnAcc(d, code);
     const s = db.suppliers.find(x => x.name === name && (!code || recAcc(SYS.suppliers, x) === code));
-    return suppOpen(s) + openOf(OPEN_TYPES[3], name) + sum(eff('purchaseInvoices').filter(i => i.supplier === name && on(i)), i => i.amount) + sum(eff('stockIn').filter(r => r.supplier === name), r => docTotals(r).net) + sum(eff('supplierAccruals').filter(r => r.party === name && on(r)), r => +r.amount || 0)
+    return suppOpen(s) + openOf(OPEN_TYPES[3], name, code) + sum(eff('purchaseInvoices').filter(i => i.supplier === name && on(i)), i => i.amount) + sum(eff('stockIn').filter(r => r.supplier === name), r => docTotals(r).net) + sum(eff('supplierAccruals').filter(r => r.party === name && on(r)), r => +r.amount || 0)
       - sum(eff('purchaseReturns').filter(r => r.supplier === name && on(r)), r => r.amount) - sum(eff('payments').filter(r => r.party === name && isPartyDoc(r, 's') && on(r)), r => r.amount);
   });
   const salesPaid = inv => sum(eff('receipts').filter(r => r.invoice === inv.no), r => r.amount) + sum(eff('salesReturns').filter(r => r.invoice === inv.no), r => r.amount);
@@ -905,19 +938,21 @@
       C('code', 'الكود', CODE), C('name', 'اسم العميل', { full: true }),
       C('category', 'الحساب الرئيسي', { render: plain, input: 'select', options: mainAccOpts(SYS.customers), aka: ['التصنيف'] }),
       C('phone', 'الهاتف', { input: 'tel' }), C('city', 'المدينة'),
-      C('limit', 'حد الائتمان', M), C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, formOnly: true, aka: ['رصيد أول المدة'] }),
-      C('openCr', 'رصيد أول المدة — دائن', { ...M, optional: true, formOnly: true }),
+      C('limit', 'حد الائتمان', M), C('openDr', 'رصيد أول المدة — مدين (يُرحّل بعد الاعتماد)', { ...M, optional: true, formOnly: true, aka: ['رصيد أول المدة', 'رصيد أول المدة — مدين'] }),
+      C('openCr', 'رصيد أول المدة — دائن (يُرحّل بعد الاعتماد)', { ...M, optional: true, formOnly: true, aka: ['رصيد أول المدة — دائن'] }),
       C('balance', 'الرصيد الحالي', computed(r => custBal(r.name, recAcc(SYS.customers, r)), { total: true, render: (v, r) => v > +r.limit && +r.limit ? `<span class="pill red" title="تجاوز حد الائتمان">${money(v)}</span>` : money(v) }))],
       actions: [{ icon: 'list', title: 'كشف حساب العميل', fn: r => customerStatement(r) }],
+      afterSave: r => partyOpenSync('customers', r),
       load: r => r.opening && !+r.openDr && !+r.openCr ? { openDr: +r.opening > 0 ? +r.opening : 0, openCr: +r.opening < 0 ? -r.opening : 0 } : {},
       validate: d => openPair(d) },
     suppliers: { title: 'الموردون', sub: 'كل تصنيف له حساب مستقل في شجرة الحسابات تحت حـ/ الموردين — نفس الاسم يمكن تسجيله في أكثر من حساب رئيسي', single: 'مورد', key: 'name', keyScope: 'category', filter: 'category', cols: [
       C('code', 'الكود', CODE), C('name', 'اسم المورد', { full: true }), C('phone', 'الهاتف', { input: 'tel' }), C('city', 'المدينة'),
       C('category', 'الحساب الرئيسي', { render: plain, input: 'select', options: mainAccOpts(SYS.suppliers), aka: ['التصنيف'] }),
-C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, formOnly: true }),
-      C('openCr', 'رصيد أول المدة — دائن', { ...M, optional: true, formOnly: true, aka: ['رصيد أول المدة'] }),
+C('openDr', 'رصيد أول المدة — مدين (يُرحّل بعد الاعتماد)', { ...M, optional: true, formOnly: true, aka: ['رصيد أول المدة — مدين'] }),
+      C('openCr', 'رصيد أول المدة — دائن (يُرحّل بعد الاعتماد)', { ...M, optional: true, formOnly: true, aka: ['رصيد أول المدة', 'رصيد أول المدة — دائن'] }),
       C('balance', 'المستحق للمورد', computed(r => suppBal(r.name, recAcc(SYS.suppliers, r)), { total: true }))],
       actions: [{ icon: 'list', title: 'كشف حساب المورد', fn: r => supplierStatement(r) }],
+      afterSave: r => partyOpenSync('suppliers', r),
       load: r => r.opening && !+r.openDr && !+r.openCr ? { openCr: +r.opening > 0 ? +r.opening : 0, openDr: +r.opening < 0 ? -r.opening : 0 } : {},
       validate: d => openPair(d) },
     items: { title: 'الأصناف', sub: 'اسم المخزون (حساب الشجرة) › المجموعة › الصنف › الوحدة — الرصيد = أول المدة + الإضافة − الصرف', single: 'صنف', key: 'name', filter: 'category', cols: [
@@ -2851,14 +2886,17 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
     // الرصيد يُخزن موجباً في جانب طبيعة الحساب، ويُعرض في خانة المدين أو الدائن
     const natDebit = (code, natureVal, parent) => { if (natureVal) return natureVal === 'مدين'; for (let x = acc(parent); x; x = acc(x.parent)) if (x.nature) return x.nature === 'مدين'; return /^[13]/.test(code); };
     const b0 = a ? +a.balance || 0 : 0, d0 = a ? natDebit(a.code, a.nature, a.parent) : true;
-    const balDr = d0 ? Math.max(b0, 0) : Math.max(-b0, 0), balCr = d0 ? Math.max(-b0, 0) : Math.max(b0, 0);
+    const odoc = a?.openDoc ? db.openingBalances.find(r => r.id === a.openDoc) : null;
+    const balDr = odoc ? +odoc.dr || 0 : d0 ? Math.max(b0, 0) : Math.max(-b0, 0), balCr = odoc ? +odoc.cr || 0 : d0 ? Math.max(-b0, 0) : Math.max(b0, 0);
     openModal(a ? 'تعديل حساب' : 'إضافة حساب', fields,
       a ? { ...a, parent: a.parent ?? '', balDr: balDr || '', balCr: balCr || '' } : { parent: p ?? '', code: suggestCode(p), name: '', balDr: '', balCr: '' },
       data => {
         const bd = +data.balDr || 0, bc = +data.balCr || 0;
         if (bd < 0 || bc < 0) { toast('الرصيد لا يكون سالباً'); return false; }
         if (bd && bc) { toast('اكتب الرصيد الافتتاحي في خانة المدين أو الدائن وليس الاثنين'); return false; }
-        data.balance = natDebit(data.code.trim(), data.nature, data.parent || null) ? bd - bc : bc - bd;
+        // تعديل الرصيد الافتتاحي يُنشئ مستند رصيد افتتاحي ينتظر الاعتماد ثم يُرحّل (ولا يُكتب في الحساب مباشرة)
+        const openChanged = isLeaf && (bd !== balDr || bc !== balCr);
+        data.balance = openChanged ? 0 : (a ? +a.balance || 0 : 0);
         if (a) { a = db.accounts.find(x => x.id === a.id); if (!a) { toast('هذا الحساب حذفه مستخدم آخر'); return; } }
         const code = data.code.trim(), par = data.parent || null;
         if (db.accounts.some(x => x.code === code && x !== a)) { toast('كود الحساب مستخدم من قبل'); return false; }
@@ -2868,16 +2906,19 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
           const old = a.code;
           if (old !== code && movements()[old]) { toast('لا يمكن تغيير كود حساب عليه حركات مرحّلة من المستندات'); return false; }
           Object.assign(a, { code, name: data.name.trim(), parent: par, nature: data.nature || '', balance: isLeaf ? +data.balance || 0 : a.balance });
+          if (openChanged) accOpenSync(a, bd, bc);
           if (old !== code) {
             db.accounts.forEach(x => { if (x.parent === old) x.parent = code; });
             db.cashboxes.forEach(b => { if (b.accountNo === old) b.accountNo = code; });
           }
           accRefFields.forEach(([t, f]) => db[t].forEach(r => { if (accCode(r[f]) === old) r[f] = accLabel(a); }));
         } else {
-          db.accounts.push({ id: genId(), code, name: data.name.trim(), parent: par, nature: data.nature || '', balance: +data.balance || 0 });
+          const na = { id: genId(), code, name: data.name.trim(), parent: par, nature: data.nature || '', balance: 0 };
+          db.accounts.push(na); if (bd || bc) accOpenSync(na, bd, bc);
           if (par) state.collapsed.delete(par);
         }
-        save(); renderTree(); toast(a ? 'تم حفظ الحساب' : 'تمت إضافة الحساب');
+        save(); renderTree(); renderNav(); toast(a ? 'تم حفظ الحساب' : 'تمت إضافة الحساب');
+        if (bd || bc) setTimeout(() => toast('الرصيد الافتتاحي أُرسل للاعتماد — يُرحّل بعد اعتماده من شاشة الموافقات', 5000), 1600);
       });
   }
 
@@ -3985,7 +4026,7 @@ C('openDr', 'رصيد أول المدة — مدين', { ...M, optional: true, f
   const APPR_MODULES = ['journal', 'openingBalances', 'receipts', 'payments', 'boxTransfers', 'supplierAccruals', 'salesInvoices', 'salesReturns', 'purchaseInvoices', 'purchaseReturns',
     'stockIn', 'stockOut', 'transfers', 'payroll', 'dailyLabor', 'advances', 'maintenanceOrders'];
   const QTY_MODULES = ['stockIn', 'stockOut', 'transfers'];
-  const amountOf = (t, r) => t === 'payroll' ? (+r.basic + +r.allowances - +r.deductions) : t === 'dailyLabor' ? r.days * r.wage
+  const amountOf = (t, r) => t === 'openingBalances' ? (obDr(r) || obCr(r)) : t === 'payroll' ? (+r.basic + +r.allowances - +r.deductions) : t === 'dailyLabor' ? r.days * r.wage
     : t === 'maintenanceOrders' ? +r.cost || 0 : t === 'stockIn' || t === 'stockOut' ? (docTotals(r).sub ? docTotals(r).net : docTotals(r).qty) : QTY_MODULES.includes(t) ? +r.qty || 0 : +r.amount || 0;
   const apprGlobal = () => db.approvalCfg || {};
   const apprCfg = t => apprGlobal().modules?.[t];
