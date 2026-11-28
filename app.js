@@ -538,6 +538,25 @@
     cache = {};
     return doc;
   }
+  // ترحيل الأرصدة الافتتاحية القديمة المكتوبة في قواعد بيانات الموردين والعملاء (قبل نظام الاعتماد) — مرة واحدة لكل سجل
+  // تُنشأ مستندات رصيد افتتاحي معتمدة فتظهر في الأرصدة الافتتاحية والقيود اليومية وكل التقارير
+  const legacyOpenings = () => [...db.suppliers.map(r => ['suppliers', r]), ...db.customers.map(r => ['customers', r])]
+    .filter(([, r]) => !r.openDoc && (+r.openDr || +r.openCr || +r.opening));
+  function migrateLegacyOpenings() {
+    const list = legacyOpenings(); if (!list.length) return 0;
+    const by = curUser()?.id || null, at = new Date().toISOString();
+    list.forEach(([t, r]) => {
+      const sup = t === 'suppliers';
+      const net = sup ? (+r.opening || 0) + (+r.openCr || 0) - (+r.openDr || 0) : (+r.opening || 0) + (+r.openDr || 0) - (+r.openCr || 0);
+      const dr = sup ? Math.max(-net, 0) : Math.max(net, 0), cr = sup ? Math.max(net, 0) : Math.max(-net, 0);
+      r.openDr = dr; r.openCr = cr; r.opening = 0;
+      partyOpenSync(t, r);
+      const doc = db.openingBalances.find(x => x.id === r.openDoc);
+      if (doc) doc.appr = { status: 'approved', level: 0, steps: [{ action: 'submit', by, at }, { action: 'approve', by, at, level: 0, note: 'ترحيل الأرصدة الافتتاحية من قاعدة البيانات' }] };
+    });
+    cache = {}; save();
+    return list.length;
+  }
   const accOpenSync = (a, dr, cr) => {
     const box = db.cashboxes.find(b => b.accountNo === a.code);
     const doc = syncOpeningDoc(`accounts/${a.id}`, box ? { otype: OPEN_TYPES[0], box: box.name, dr, cr, desc: `رصيد افتتاحي — ${box.name}` }
@@ -3230,6 +3249,12 @@ C('openDr', 'رصيد أول المدة — مدين (يُرحّل بعد الا
     showAuth('login');
   }
   function unlock() {
+    setTimeout(() => {
+      const u = curUser();
+      if (!u || !isAdminUser(u) || !store.canWrite || (store.mode === 'cloud' && !store.canAdmin) || !legacyOpenings().length) return;
+      const n = migrateLegacyOpenings();
+      if (n) { renderNav(); scheduleRender(); toast(`تم ترحيل ${n} رصيد افتتاحي من قواعد بيانات الموردين والعملاء — تظهر في الأرصدة الافتتاحية والقيود اليومية`, 6000); }
+    }, 2500);
     state.authMode = null;
     document.body.classList.remove('locked');
     $('#auth').hidden = true; $('#auth').innerHTML = '';
